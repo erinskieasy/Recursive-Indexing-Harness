@@ -1,4 +1,4 @@
-import { getPool, sql } from '../db';
+import { getPool } from '../db';
 
 async function listNotes() {
     try {

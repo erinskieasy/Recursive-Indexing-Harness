@@ -12,31 +12,16 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const config: sql.config = {
-  // Parse connection string logic is handled better by mssql direct string usage or parsing it manually
-  // Using connection string directly
-  server: '', // Placeholder, will be parsed or overriden by string
-  authentication: {
-    type: 'default',
-    options: {
-      userName: '',
-      password: '',
-    }
-  },
-  options: {
-    encrypt: true,
-    trustServerCertificate: false,
-  }
-};
+
 
 // Singleton pool
 let pool: sql.ConnectionPool | null = null;
 
 export async function getPool() {
   if (pool) return pool;
-  
+
   try {
-     // mssql connect can take a connection string directly
+    // mssql connect can take a connection string directly
     pool = await sql.connect(connectionString!);
     return pool;
   } catch (err) {
