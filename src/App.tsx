@@ -1,5 +1,5 @@
 import { RouterProvider, createRouter, createRoute, createRootRoute, Outlet } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/router-devtools'
+
 
 const rootRoute = createRootRoute({
     component: () => (
@@ -15,11 +15,17 @@ const rootRoute = createRootRoute({
                                 Recursive context accumulation engine
                             </p>
                         </div>
+                        <a
+                            href="/.auth/logout"
+                            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors shadow-sm"
+                        >
+                            Sign Out
+                        </a>
                     </div>
                 </div>
             </nav>
             <Outlet />
-            <TanStackRouterDevtools />
+
         </div>
     ),
 })
