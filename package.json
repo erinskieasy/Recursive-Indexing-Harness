@@ -24,7 +24,9 @@
     "openai": "^6.17.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
@@ -37,8 +39,6 @@
     "npm-run-all": "^4.1.5",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
 }
