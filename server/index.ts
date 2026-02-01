@@ -160,7 +160,11 @@ app.delete('/api/notes/:id', async (req, res) => {
 });
 
 // Serve static files in production
-if (process.env.NODE_ENV === 'production') {
+// Serve static files in production or Azure
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.WEBSITE_SITE_NAME;
+
+if (isProduction) {
+    console.log('Serving static files from ../dist');
     app.use(express.static(path.join(__dirname, '../dist')))
 
     app.get('*', (req, res) => {
