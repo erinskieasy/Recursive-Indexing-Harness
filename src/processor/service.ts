@@ -47,9 +47,15 @@ export async function processChunks() {
             const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
             const priorNotes = notesResult.recordset.map((n: any) => n.content).join('\n---\n');
 
-            const systemPrompt = `You are a recursive indexing assistant. 
-You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
-Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.`;
+            // Fetch System Prompt from DB
+            const promptResult = await pool.request()
+                .input('key', sql.VarChar(50), 'system_prompt')
+                .query("SELECT [value] FROM Settings WHERE [key] = @key");
+
+            if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
+                throw new Error("System Prompt not set. Please configure it in Settings.");
+            }
+            const systemPrompt = promptResult.recordset[0].value;
 
             const userMessage = `
 # Orchestration Rules
@@ -145,9 +151,15 @@ async function processChunkLogic(pool: any, chunk: any, rules: string, newNotes:
     const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
     const priorNotes = notesResult.recordset.map((n: any) => n.content).join('\n---\n');
 
-    const systemPrompt = `You are a recursive indexing assistant. 
-You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
-Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.`;
+    // Fetch System Prompt from DB
+    const promptResult = await pool.request()
+        .input('key', sql.VarChar(50), 'system_prompt')
+        .query("SELECT [value] FROM Settings WHERE [key] = @key");
+
+    if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
+        throw new Error("System Prompt not set. Please configure it in Settings.");
+    }
+    const systemPrompt = promptResult.recordset[0].value;
 
     const userMessage = `
 # Orchestration Rules
