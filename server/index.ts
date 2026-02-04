@@ -178,7 +178,7 @@ async function initDb() {
 
         // 1. Create Settings Table
         await pool.request().query(`
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Settings' AND xtype='U')
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Settings')
             CREATE TABLE Settings (
                 [key] VARCHAR(50) PRIMARY KEY,
                 [value] NVARCHAR(MAX)
