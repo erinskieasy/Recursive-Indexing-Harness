@@ -159,6 +159,44 @@ app.delete('/api/notes/:id', async (req, res) => {
     }
 });
 
+// PUT Update Chunk
+app.put('/api/chunks/:id', async (req, res) => {
+    const { id } = req.params;
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ error: 'Content is required' });
+
+    try {
+        const pool = await getPool();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('content', sql.NVarChar(sql.MAX), content)
+            .query('UPDATE TextChunks SET content = @content WHERE id = @id');
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update chunk' });
+    }
+});
+
+// PUT Update Rule
+app.put('/api/rules/:id', async (req, res) => {
+    const { id } = req.params;
+    const { instruction } = req.body;
+    if (!instruction) return res.status(400).json({ error: 'Instruction is required' });
+
+    try {
+        const pool = await getPool();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('instruction', sql.NVarChar(sql.MAX), instruction)
+            .query('UPDATE OrchestrationRules SET instruction = @instruction WHERE id = @id');
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update rule' });
+    }
+});
+
 
 
 // Database Initialization

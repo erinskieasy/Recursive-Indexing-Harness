@@ -52,6 +52,22 @@ export const api = {
         });
         return res.json();
     },
+    async updateChunk(id: number, content: string) {
+        const res = await fetch(`/api/chunks/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+        });
+        return res.json();
+    },
+    async updateRule(id: number, instruction: string) {
+        const res = await fetch(`/api/rules/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction }),
+        });
+        return res.json();
+    },
     async processChunk(chunkId: number) {
         const res = await fetch('/api/process-chunk', {
             method: 'POST',

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import toast from 'react-hot-toast';
+import EditModal from './EditModal';
 
 export default function Dashboard() {
     const [chunkInput, setChunkInput] = useState('');
@@ -11,6 +12,7 @@ export default function Dashboard() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingChunkId, setProcessingChunkId] = useState<number | null>(null);
     const [status, setStatus] = useState('');
+    const [editingItem, setEditingItem] = useState<{ type: 'chunk' | 'rule', id: number, content: string } | null>(null);
 
     useEffect(() => {
         fetchData();
@@ -140,6 +142,23 @@ export default function Dashboard() {
                                     </div>
                                 </div>
 
+                                <EditModal
+                                    isOpen={!!editingItem}
+                                    onClose={() => setEditingItem(null)}
+                                    title={editingItem?.type === 'chunk' ? 'Edit Text Chunk' : 'Edit Orchestration Rule'}
+                                    initialContent={editingItem?.content || ''}
+                                    onSave={async (newContent) => {
+                                        if (!editingItem) return;
+                                        if (editingItem.type === 'chunk') {
+                                            await api.updateChunk(editingItem.id, newContent);
+                                        } else {
+                                            await api.updateRule(editingItem.id, newContent);
+                                        }
+                                        fetchData();
+                                        toast.success('Updated successfully');
+                                    }}
+                                />
+
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">New Orchestration Rule</label>
                                     <div className="flex gap-2">
@@ -181,13 +200,25 @@ export default function Dashboard() {
                                                     )}
                                                     <span className={`truncate ${processingChunkId === c.id ? 'font-medium text-blue-700' : 'text-gray-700'}`}>{c.content}</span>
                                                 </div>
-                                                <button
-                                                    onClick={async () => { await api.deleteChunk(c.id); fetchData(); }}
-                                                    className="bg-red-50 text-red-400 hover:text-red-600 p-1 rounded opacity-0 group-hover:opacity-100 transition"
-                                                    title="Delete Chunk"
-                                                >
-                                                    ✕
-                                                </button>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                                                    <button
+                                                        onClick={() => setEditingItem({ type: 'chunk', id: c.id, content: c.content })}
+                                                        className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                                                        title="Edit Chunk"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        onClick={async () => { await api.deleteChunk(c.id); fetchData(); }}
+                                                        className="text-red-400 hover:text-red-600 p-1 rounded"
+                                                        title="Delete Chunk"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
                                             </li>
                                         ))}
                                     </ul>
@@ -198,13 +229,25 @@ export default function Dashboard() {
                                         {rules.map((r) => (
                                             <li key={r.id} className="text-sm bg-indigo-50 p-2 rounded border border-indigo-100 text-indigo-900 flex justify-between items-center group">
                                                 <span className="flex-1">{r.instruction}</span>
-                                                <button
-                                                    onClick={async () => { await api.deleteRule(r.id); fetchData(); }}
-                                                    className="text-indigo-400 hover:text-red-600 p-1 rounded opacity-0 group-hover:opacity-100 transition"
-                                                    title="Delete Rule"
-                                                >
-                                                    ✕
-                                                </button>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                                                    <button
+                                                        onClick={() => setEditingItem({ type: 'rule', id: r.id, content: r.instruction })}
+                                                        className="p-1 text-indigo-400 hover:text-indigo-600 rounded"
+                                                        title="Edit Rule"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        onClick={async () => { await api.deleteRule(r.id); fetchData(); }}
+                                                        className="text-indigo-400 hover:text-red-600 p-1 rounded"
+                                                        title="Delete Rule"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
                                             </li>
                                         ))}
                                     </ul>
