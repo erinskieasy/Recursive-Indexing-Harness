@@ -2,6 +2,54 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import toast from 'react-hot-toast';
 import EditModal from './EditModal';
+import {
+    DndContext,
+    closestCenter,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+    DragEndEvent
+} from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    verticalListSortingStrategy,
+    useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Sortable Item Component
+function SortableItem({ id, children, renderHandle }: { id: number, children: React.ReactNode, renderHandle?: (props: any) => React.ReactNode }) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+    } = useSortable({ id });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+    };
+
+    return (
+        <li ref={setNodeRef} style={style} className="flex items-center gap-2 group">
+            {renderHandle ? renderHandle({ ...attributes, ...listeners }) : (
+                <div {...attributes} {...listeners} className="cursor-grab text-gray-400 hover:text-gray-600 p-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle>
+                    </svg>
+                </div>
+            )}
+            <div className="flex-1 min-w-0">
+                {children}
+            </div>
+        </li>
+    );
+}
 
 export default function Dashboard() {
     const [chunkInput, setChunkInput] = useState('');
@@ -13,6 +61,13 @@ export default function Dashboard() {
     const [processingChunkId, setProcessingChunkId] = useState<number | null>(null);
     const [status, setStatus] = useState('');
     const [editingItem, setEditingItem] = useState<{ type: 'chunk' | 'rule', id: number, content: string } | null>(null);
+
+    const sensors = useSensors(
+        useSensor(PointerSensor),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
 
     useEffect(() => {
         fetchData();
@@ -54,6 +109,45 @@ export default function Dashboard() {
             console.error('Failed to add rule', err);
         }
     };
+
+    const handleDragEndChunks = async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (active.id !== over?.id) {
+            setChunks((items) => {
+                const oldIndex = items.findIndex((item) => item.id === active.id);
+                const newIndex = items.findIndex((item) => item.id === over?.id);
+                const newItems = arrayMove(items, oldIndex, newIndex);
+
+                // Fire and forget API update
+                api.reorderChunks(newItems.map(i => i.id)).catch(err => {
+                    console.error('Failed to save chunk order', err);
+                    toast.error('Failed to save order');
+                });
+
+                return newItems;
+            });
+        }
+    };
+
+    const handleDragEndRules = async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (active.id !== over?.id) {
+            setRules((items) => {
+                const oldIndex = items.findIndex((item) => item.id === active.id);
+                const newIndex = items.findIndex((item) => item.id === over?.id);
+                const newItems = arrayMove(items, oldIndex, newIndex);
+
+                // Fire and forget API update
+                api.reorderRules(newItems.map(i => i.id)).catch(err => {
+                    console.error('Failed to save rule order', err);
+                    toast.error('Failed to save order');
+                });
+
+                return newItems;
+            });
+        }
+    };
+
 
     const handleProcess = async () => {
         setIsProcessing(true);
@@ -185,72 +279,99 @@ export default function Dashboard() {
                             <div className="space-y-4 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                                 <div>
                                     <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Text Chunks ({chunks.length})</h3>
-                                    <ul className="space-y-2">
-                                        {chunks.map((c) => (
-                                            <li key={c.id} className={`text-sm p-2 rounded border border-gray-100 flex justify-between items-center group
-                                                ${processingChunkId === c.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50'}
-                                                transition-colors duration-200
-                                            `}>
-                                                <div className="flex items-center gap-3 overflow-hidden flex-1">
-                                                    {processingChunkId === c.id && (
-                                                        <svg className="animate-spin h-4 w-4 text-blue-500 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                        </svg>
-                                                    )}
-                                                    <span className={`truncate ${processingChunkId === c.id ? 'font-medium text-blue-700' : 'text-gray-700'}`}>{c.content}</span>
-                                                </div>
-                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                                                    <button
-                                                        onClick={() => setEditingItem({ type: 'chunk', id: c.id, content: c.content })}
-                                                        className="p-1 text-gray-400 hover:text-blue-600 rounded"
-                                                        title="Edit Chunk"
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                                        </svg>
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => { await api.deleteChunk(c.id); fetchData(); }}
-                                                        className="text-red-400 hover:text-red-600 p-1 rounded"
-                                                        title="Delete Chunk"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    <DndContext
+                                        sensors={sensors}
+                                        collisionDetection={closestCenter}
+                                        onDragEnd={handleDragEndChunks}
+                                    >
+                                        <SortableContext
+                                            items={chunks.map(c => c.id)}
+                                            strategy={verticalListSortingStrategy}
+                                        >
+                                            <ul className="space-y-2">
+                                                {chunks.map((c) => (
+                                                    <SortableItem key={c.id} id={c.id}>
+                                                        <div className={`text-sm p-2 rounded border border-gray-100 flex justify-between items-center group/item w-full
+                                                            ${processingChunkId === c.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50'}
+                                                            transition-colors duration-200
+                                                        `}>
+                                                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                                                                {processingChunkId === c.id && (
+                                                                    <svg className="animate-spin h-4 w-4 text-blue-500 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                                    </svg>
+                                                                )}
+                                                                <span className={`truncate ${processingChunkId === c.id ? 'font-medium text-blue-700' : 'text-gray-700'}`}>{c.content}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition">
+                                                                <button
+                                                                    onClick={() => setEditingItem({ type: 'chunk', id: c.id, content: c.content })}
+                                                                    className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                                                                    title="Edit Chunk"
+                                                                >
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                                    </svg>
+                                                                </button>
+                                                                <button
+                                                                    onClick={async () => { await api.deleteChunk(c.id); fetchData(); }}
+                                                                    className="text-red-400 hover:text-red-600 p-1 rounded"
+                                                                    title="Delete Chunk"
+                                                                >
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </SortableItem>
+                                                ))}
+                                            </ul>
+                                        </SortableContext>
+                                    </DndContext>
                                 </div>
+
                                 <div>
                                     <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Rules ({rules.length})</h3>
-                                    <ul className="space-y-2">
-                                        {rules.map((r) => (
-                                            <li key={r.id} className="text-sm bg-indigo-50 p-2 rounded border border-indigo-100 text-indigo-900 flex justify-between items-center group">
-                                                <span className="flex-1">{r.instruction}</span>
-                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                                                    <button
-                                                        onClick={() => setEditingItem({ type: 'rule', id: r.id, content: r.instruction })}
-                                                        className="p-1 text-indigo-400 hover:text-indigo-600 rounded"
-                                                        title="Edit Rule"
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                                        </svg>
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => { await api.deleteRule(r.id); fetchData(); }}
-                                                        className="text-indigo-400 hover:text-red-600 p-1 rounded"
-                                                        title="Delete Rule"
-                                                    >
-                                                        ✕
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    <DndContext
+                                        sensors={sensors}
+                                        collisionDetection={closestCenter}
+                                        onDragEnd={handleDragEndRules}
+                                    >
+                                        <SortableContext
+                                            items={rules.map(r => r.id)}
+                                            strategy={verticalListSortingStrategy}
+                                        >
+                                            <ul className="space-y-2">
+                                                {rules.map((r) => (
+                                                    <SortableItem key={r.id} id={r.id}>
+                                                        <div className="text-sm bg-indigo-50 p-2 rounded border border-indigo-100 text-indigo-900 flex justify-between items-center group/item w-full">
+                                                            <span className="flex-1">{r.instruction}</span>
+                                                            <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition">
+                                                                <button
+                                                                    onClick={() => setEditingItem({ type: 'rule', id: r.id, content: r.instruction })}
+                                                                    className="p-1 text-indigo-400 hover:text-indigo-600 rounded"
+                                                                    title="Edit Rule"
+                                                                >
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                                    </svg>
+                                                                </button>
+                                                                <button
+                                                                    onClick={async () => { await api.deleteRule(r.id); fetchData(); }}
+                                                                    className="text-indigo-400 hover:text-red-600 p-1 rounded"
+                                                                    title="Delete Rule"
+                                                                >
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </SortableItem>
+                                                ))}
+                                            </ul>
+                                        </SortableContext>
+                                    </DndContext>
                                 </div>
                             </div>
                         </section>

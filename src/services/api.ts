@@ -68,6 +68,22 @@ export const api = {
         });
         return res.json();
     },
+    async reorderChunks(orderedIds: number[]) {
+        const res = await fetch('/api/chunks/reorder', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedIds }),
+        });
+        return res.json();
+    },
+    async reorderRules(orderedIds: number[]) {
+        const res = await fetch('/api/rules/reorder', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedIds }),
+        });
+        return res.json();
+    },
     async processChunk(chunkId: number) {
         const res = await fetch('/api/process-chunk', {
             method: 'POST',

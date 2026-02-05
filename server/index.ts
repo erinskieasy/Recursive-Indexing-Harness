@@ -38,7 +38,8 @@ app.get('/api/notes', async (req, res) => {
 app.get('/api/chunks', async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM TextChunks ORDER BY id ASC');
+        // Fallback to id if position is null (legacy/just added)
+        const result = await pool.request().query('SELECT * FROM TextChunks ORDER BY position ASC, id ASC');
         res.json(result.recordset);
     } catch (err) {
         console.error(err);
@@ -50,7 +51,7 @@ app.get('/api/chunks', async (req, res) => {
 app.get('/api/rules', async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM OrchestrationRules ORDER BY id ASC');
+        const result = await pool.request().query('SELECT * FROM OrchestrationRules ORDER BY position ASC, id ASC');
         res.json(result.recordset);
     } catch (err) {
         console.error(err);
@@ -199,12 +200,101 @@ app.put('/api/rules/:id', async (req, res) => {
 
 
 
+// PUT Reorder Chunks
+app.put('/api/chunks/reorder', async (req, res) => {
+    const { orderedIds } = req.body; // Array of IDs in new order
+    console.log('Reordering chunks:', orderedIds);
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
+
+    try {
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        try {
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await transaction.request()
+                    .input('pos', sql.Int, i)
+                    .input('id', sql.Int, id)
+                    .query('UPDATE TextChunks SET position = @pos WHERE id = @id');
+            }
+            await transaction.commit();
+            console.log('Reorder chunks committed successfully');
+            res.json({ success: true });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        console.error('Reorder chunks failed:', err);
+        res.status(500).json({ error: 'Failed to reorder chunks' });
+    }
+});
+
+// PUT Reorder Rules
+app.put('/api/rules/reorder', async (req, res) => {
+    const { orderedIds } = req.body;
+    console.log('Reordering rules:', orderedIds);
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
+
+    try {
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        try {
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await transaction.request()
+                    .input('pos', sql.Int, i)
+                    .input('id', sql.Int, id)
+                    .query('UPDATE OrchestrationRules SET position = @pos WHERE id = @id');
+            }
+            await transaction.commit();
+            console.log('Reorder rules committed successfully');
+            res.json({ success: true });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        console.error('Reorder rules failed:', err);
+        res.status(500).json({ error: 'Failed to reorder rules' });
+    }
+});
+
+
 // Database Initialization
 async function initDb() {
     try {
         const pool = await getPool();
 
-        // 1. Create Settings Table
+        // 2. Add Position Column if not exists (TextChunks)
+        try {
+            await pool.request().query(`
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'TextChunks' AND COLUMN_NAME = 'position')
+                BEGIN
+                    ALTER TABLE TextChunks ADD position INT;
+                END
+                UPDATE TextChunks SET position = id WHERE position IS NULL;
+            `);
+        } catch (e) {
+            console.error('Error adding position to TextChunks:', e);
+        }
+
+        // 3. Add Position Column if not exists (OrchestrationRules)
+        try {
+            await pool.request().query(`
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'OrchestrationRules' AND COLUMN_NAME = 'position')
+                BEGIN
+                    ALTER TABLE OrchestrationRules ADD position INT;
+                END
+                UPDATE OrchestrationRules SET position = id WHERE position IS NULL;
+            `);
+        } catch (e) {
+            console.error('Error adding position to OrchestrationRules:', e);
+        }
+
+        // 4. Create Settings Table
         await pool.request().query(`
             IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Settings')
             CREATE TABLE Settings (
@@ -213,7 +303,7 @@ async function initDb() {
             )
         `);
 
-        // 2. Seed Default System Prompt
+        // 5. Seed Default System Prompt
         const defaultPrompt = `You are a recursive indexing assistant.`;
 
         const checkResult = await pool.request()
