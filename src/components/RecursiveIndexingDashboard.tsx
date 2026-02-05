@@ -113,38 +113,38 @@ export default function Dashboard() {
     const handleDragEndChunks = async (event: DragEndEvent) => {
         const { active, over } = event;
         if (active.id !== over?.id) {
-            setChunks((items) => {
-                const oldIndex = items.findIndex((item) => item.id === active.id);
-                const newIndex = items.findIndex((item) => item.id === over?.id);
-                const newItems = arrayMove(items, oldIndex, newIndex);
+            const oldIndex = chunks.findIndex((item) => item.id === active.id);
+            const newIndex = chunks.findIndex((item) => item.id === over?.id);
+            const newItems = arrayMove(chunks, oldIndex, newIndex);
 
-                // Fire and forget API update
-                api.reorderChunks(newItems.map(i => i.id)).catch(err => {
-                    console.error('Failed to save chunk order', err);
-                    toast.error('Failed to save order');
-                });
+            setChunks(newItems);
 
-                return newItems;
-            });
+            try {
+                await api.reorderChunks(newItems.map(i => i.id));
+                console.log('Chunk order saved');
+            } catch (err) {
+                console.error('Failed to save chunk order', err);
+                toast.error('Failed to save order');
+            }
         }
     };
 
     const handleDragEndRules = async (event: DragEndEvent) => {
         const { active, over } = event;
         if (active.id !== over?.id) {
-            setRules((items) => {
-                const oldIndex = items.findIndex((item) => item.id === active.id);
-                const newIndex = items.findIndex((item) => item.id === over?.id);
-                const newItems = arrayMove(items, oldIndex, newIndex);
+            const oldIndex = rules.findIndex((item) => item.id === active.id);
+            const newIndex = rules.findIndex((item) => item.id === over?.id);
+            const newItems = arrayMove(rules, oldIndex, newIndex);
 
-                // Fire and forget API update
-                api.reorderRules(newItems.map(i => i.id)).catch(err => {
-                    console.error('Failed to save rule order', err);
-                    toast.error('Failed to save order');
-                });
+            setRules(newItems);
 
-                return newItems;
-            });
+            try {
+                await api.reorderRules(newItems.map(i => i.id));
+                console.log('Rule order saved');
+            } catch (err) {
+                console.error('Failed to save rule order', err);
+                toast.error('Failed to save order');
+            }
         }
     };
 

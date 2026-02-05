@@ -69,6 +69,7 @@ export const api = {
         return res.json();
     },
     async reorderChunks(orderedIds: number[]) {
+        console.log('API: reorderChunks calling with', orderedIds);
         const res = await fetch('/api/chunks/reorder', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -77,6 +78,7 @@ export const api = {
         return res.json();
     },
     async reorderRules(orderedIds: number[]) {
+        console.log('API: reorderRules calling with', orderedIds);
         const res = await fetch('/api/rules/reorder', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
