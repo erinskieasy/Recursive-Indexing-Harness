@@ -159,17 +159,7 @@ app.delete('/api/notes/:id', async (req, res) => {
     }
 });
 
-// Serve static files in production or Azure
-const isProduction = process.env.NODE_ENV === 'production' || !!process.env.WEBSITE_SITE_NAME;
 
-if (isProduction) {
-    console.log('Serving static files from ../dist');
-    app.use(express.static(path.join(__dirname, '../dist')))
-
-    app.get('*', (req, res) => {
-        res.sendFile(path.join(__dirname, '../dist/index.html'))
-    })
-}
 
 // Database Initialization
 async function initDb() {
@@ -282,4 +272,17 @@ app.post('/api/optimize-prompt', async (req, res) => {
         res.status(500).json({ error: 'Failed to optimize prompt' });
     }
 });
+
+
+// Serve static files in production or Azure
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.WEBSITE_SITE_NAME;
+
+if (isProduction) {
+    console.log('Serving static files from ../dist');
+    app.use(express.static(path.join(__dirname, '../dist')))
+
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, '../dist/index.html'))
+    })
+}
 
