@@ -186,9 +186,7 @@ async function initDb() {
         `);
 
         // 2. Seed Default System Prompt
-        const defaultPrompt = `You are a recursive indexing assistant. 
-You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
-Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.`;
+        const defaultPrompt = `You are a recursive indexing assistant.`;
 
         const checkResult = await pool.request()
             .input('key', sql.VarChar(50), 'system_prompt')

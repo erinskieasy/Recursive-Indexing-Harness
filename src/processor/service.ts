@@ -57,7 +57,9 @@ export async function processChunks() {
             }
             const systemPrompt = promptResult.recordset[0].value;
 
-            const userMessage = `
+            const userMessage = `You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
+Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.
+
 # Orchestration Rules
 ${rules}
 
@@ -161,7 +163,9 @@ async function processChunkLogic(pool: any, chunk: any, rules: string, newNotes:
     }
     const systemPrompt = promptResult.recordset[0].value;
 
-    const userMessage = `
+    const userMessage = `You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
+Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.
+
 # Orchestration Rules
 ${rules}
 
