@@ -9,29 +9,47 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-export async function processChunks() {
+export async function processChunks(agentId: number) {
     const newNotes = [];
     try {
         const pool = await getPool();
 
-        // 1. Fetch Orchestration Rules
-        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY id ASC');
+        // 0. Fetch Agent Settings
+        const agentResult = await pool.request()
+            .input('id', sql.Int, agentId)
+            .query('SELECT system_prompt, history_limit FROM Agents WHERE id = @id');
+
+        if (agentResult.recordset.length === 0) {
+            throw new Error(`Agent ID ${agentId} not found`);
+        }
+        const agent = agentResult.recordset[0];
+        const systemPrompt = agent.system_prompt; // Can be null
+        const historyLimit = agent.history_limit || 10;
+
+        if (!systemPrompt) {
+            throw new Error("System Prompt not set for this agent.");
+        }
+
+        // 1. Fetch Orchestration Rules for Agent
+        const rulesResult = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT instruction FROM OrchestrationRules WHERE agent_id = @agent_id ORDER BY position ASC, id ASC');
         const rules = rulesResult.recordset.map((r: any) => r.instruction).join('\n');
 
         if (!rules) {
-            console.warn('Warning: No orchestration rules found.');
+            console.warn(`Warning: No orchestration rules found for agent ${agentId}.`);
         }
 
-        // 2. Fetch Text Chunks
-        const chunksResult = await pool.request().query('SELECT id, content FROM TextChunks ORDER BY id ASC');
+        // 2. Fetch Text Chunks for Agent
+        const chunksResult = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT id, content FROM TextChunks WHERE agent_id = @agent_id ORDER BY position ASC, id ASC');
         const chunks = chunksResult.recordset;
 
-        console.log(`Found ${chunks.length} chunks to process.`);
+        console.log(`Found ${chunks.length} chunks to process for agent ${agentId}.`);
 
         for (const chunk of chunks) {
-            // Check if note already exists for this chunk? 
-            // For this "harness", we might want to avoid re-processing if note exists.
-            // Let's implemented IDEMPOTENCY check: if note exists for chunk, skip.
+            // Idempotency check: if note exists for chunk, skip.
             const existingNote = await pool.request()
                 .input('text_chunk_id', sql.Int, chunk.id)
                 .query('SELECT id FROM Notes WHERE text_chunk_id = @text_chunk_id');
@@ -43,31 +61,15 @@ export async function processChunks() {
 
             console.log(`Processing Chunk ID ${chunk.id}...`);
 
-            // Fetch all current notes for context (recursive accumulation)
-            const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
-
-            // Fetch System Prompt AND History Limit from DB
-            const [promptResult, limitResult] = await Promise.all([
-                pool.request()
-                    .input('key', sql.VarChar(50), 'system_prompt')
-                    .query("SELECT [value] FROM Settings WHERE [key] = @key"),
-                pool.request()
-                    .input('key', sql.VarChar(50), 'history_limit')
-                    .query("SELECT [value] FROM Settings WHERE [key] = @key")
-            ]);
-
-            if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
-                throw new Error("System Prompt not set. Please configure it in Settings.");
-            }
-            const systemPrompt = promptResult.recordset[0].value;
+            // Fetch all current notes for context (for this agent)
+            const notesResult = await pool.request()
+                .input('agent_id', sql.Int, agentId)
+                .query('SELECT content FROM Notes WHERE agent_id = @agent_id ORDER BY created_at ASC, id ASC');
 
             let notesToUse: any[] = notesResult.recordset;
-            if (limitResult.recordset.length > 0 && limitResult.recordset[0].value) {
-                const limit = parseInt(limitResult.recordset[0].value);
-                if (!isNaN(limit) && limit > 0) {
-                    notesToUse = notesToUse.slice(-limit); // Take last N items
-                    console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
-                }
+            if (historyLimit > 0) {
+                notesToUse = notesToUse.slice(-historyLimit); // Take last N items
+                console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
             }
 
             const priorNotes = notesToUse.map((n: any) => n.content).join('\n---\n');
@@ -100,9 +102,10 @@ Return only the content of the new note.
             if (newNoteContent) {
                 // Save to DB
                 await pool.request()
+                    .input('agent_id', sql.Int, agentId)
                     .input('text_chunk_id', sql.Int, chunk.id)
                     .input('content', sql.NVarChar(sql.MAX), newNoteContent)
-                    .query('INSERT INTO Notes (text_chunk_id, content) VALUES (@text_chunk_id, @content)');
+                    .query('INSERT INTO Notes (agent_id, text_chunk_id, content) VALUES (@agent_id, @text_chunk_id, @content)');
                 console.log(`Saved Note for Chunk ID ${chunk.id}.`);
                 newNotes.push({ chunkId: chunk.id, content: newNoteContent });
             } else {
@@ -118,13 +121,24 @@ Return only the content of the new note.
     }
 }
 
-export async function processChunkById(chunkId: number) {
+export async function processChunkById(chunkId: number, agentId: number) {
     try {
         const pool = await getPool();
 
-        // 1. Fetch Chunk
+        // 0. Fetch Agent Settings
+        const agentResult = await pool.request()
+            .input('id', sql.Int, agentId)
+            .query('SELECT system_prompt, history_limit FROM Agents WHERE id = @id');
+
+        if (agentResult.recordset.length === 0) throw new Error(`Agent ID ${agentId} not found`);
+        const agent = agentResult.recordset[0];
+        if (!agent.system_prompt) throw new Error("System Prompt not set.");
+
+        // 1. Fetch Chunk (ensure it belongs to agent?)
+        // Ideally yes, but for now we trust the caller knows the mapping or we just fetch content.
         const chunkResult = await pool.request()
             .input('id', sql.Int, chunkId)
+            // .input('agent_id', sql.Int, agentId) // Optional security check
             .query('SELECT id, content FROM TextChunks WHERE id = @id');
 
         const chunk = chunkResult.recordset[0];
@@ -133,11 +147,14 @@ export async function processChunkById(chunkId: number) {
         }
 
         // 2. Fetch Rules
-        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY position ASC');
+        const rulesResult = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT instruction FROM OrchestrationRules WHERE agent_id = @agent_id ORDER BY position ASC, id ASC');
         const rules = rulesResult.recordset.map((r: any) => r.instruction).join('\n');
 
         const newNotes: any[] = [];
-        const result = await processChunkLogic(pool, chunk, rules, newNotes);
+        // We reuse logic but need to pass agent info
+        const result = await processChunkLogic(pool, chunk, rules, newNotes, agentId, agent);
 
         return { success: !!result, note: result };
 
@@ -147,48 +164,28 @@ export async function processChunkById(chunkId: number) {
     }
 }
 
-async function processChunkLogic(pool: any, chunk: any, rules: string, newNotes: any[]) {
+async function processChunkLogic(pool: any, chunk: any, rules: string, newNotes: any[], agentId: number, agentSettings: any) {
     // Idempotency check
     const existingNote = await pool.request()
         .input('text_chunk_id', sql.Int, chunk.id)
         .query('SELECT id FROM Notes WHERE text_chunk_id = @text_chunk_id');
 
     if (existingNote.recordset.length > 0) {
-        // console.log(`Skipping Chunk ID ${chunk.id} (Note exists).`);
-        // For single chunk processing, we might WANT to force re-process? 
-        // But let's stick to idempotency for now, or maybe return existing?
-        // Let's allow re-processing if manually triggered? No, duplicates are bad.
-        // Return existing note content? We don't have it here.
         return null;
     }
 
     console.log(`Processing Chunk ID ${chunk.id}...`);
 
     // Fetch all current notes for context
-    const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
-
-    // Fetch System Prompt AND History Limit from DB
-    const [promptResult, limitResult] = await Promise.all([
-        pool.request()
-            .input('key', sql.VarChar(50), 'system_prompt')
-            .query("SELECT [value] FROM Settings WHERE [key] = @key"),
-        pool.request()
-            .input('key', sql.VarChar(50), 'history_limit')
-            .query("SELECT [value] FROM Settings WHERE [key] = @key")
-    ]);
-
-    if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
-        throw new Error("System Prompt not set. Please configure it in Settings.");
-    }
-    const systemPrompt = promptResult.recordset[0].value;
+    const notesResult = await pool.request()
+        .input('agent_id', sql.Int, agentId)
+        .query('SELECT content FROM Notes WHERE agent_id = @agent_id ORDER BY created_at ASC, id ASC');
 
     let notesToUse: any[] = notesResult.recordset;
-    if (limitResult.recordset.length > 0 && limitResult.recordset[0].value) {
-        const limit = parseInt(limitResult.recordset[0].value);
-        if (!isNaN(limit) && limit > 0) {
-            notesToUse = notesToUse.slice(-limit); // Take last N items
-            console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
-        }
+    const historyLimit = agentSettings.history_limit || 10;
+    if (historyLimit > 0) {
+        notesToUse = notesToUse.slice(-historyLimit);
+        console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
     }
 
     const priorNotes = notesToUse.map((n: any) => n.content).join('\n---\n');
@@ -214,7 +211,7 @@ Return only the content of the new note.
     const completion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-            { role: "system", content: systemPrompt },
+            { role: "system", content: agentSettings.system_prompt },
             { role: "user", content: userMessage }
         ],
     });
@@ -223,18 +220,13 @@ Return only the content of the new note.
 
     if (newNoteContent) {
         await pool.request()
+            .input('agent_id', sql.Int, agentId)
             .input('text_chunk_id', sql.Int, chunk.id)
             .input('content', sql.NVarChar(sql.MAX), newNoteContent)
-            .query('INSERT INTO Notes (text_chunk_id, content) VALUES (@text_chunk_id, @content)');
+            .query('INSERT INTO Notes (agent_id, text_chunk_id, content) VALUES (@agent_id, @text_chunk_id, @content)');
+
         console.log(`Saved Note for Chunk ID ${chunk.id}.`);
-        const noteObj = { id: Date.now(), text_chunk_id: chunk.id, content: newNoteContent }; // Mock ID or fetch it? 
-        // Ideally fetch real ID, but for UI update mock is okay or fetch fresh.
-        // We'll return content. The UI does a fetchNotes() anyway.
-        // But my Dashboard implementation uses result.note to update state optimistically?
-        // Dashboard: setNotes(prev => [...prev, result.note]);
-        // So I should return a shape that matches Note.
-        // I'll assume we can use a placeholder ID or just rely on fetchData().
-        // Actually Dashboard calls fetchData() at the end of loop.
+        const noteObj = { id: Date.now(), text_chunk_id: chunk.id, content: newNoteContent, agent_id: agentId };
 
         newNotes.push(noteObj);
         return noteObj;

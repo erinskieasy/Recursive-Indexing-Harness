@@ -22,11 +22,180 @@ app.get('/api/health', (req, res) => {
 import { getPool, sql } from '../src/db/index.js'; // Ensure extension if ESM
 import { processChunks, processChunkById } from '../src/processor/service.js';
 
-// GET Notes
-app.get('/api/notes', async (req, res) => {
+// --- AGENTS API ---
+
+// GET All Agents
+app.get('/api/agents', async (req, res) => {
     try {
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM Notes ORDER BY id ASC');
+        const result = await pool.request().query('SELECT * FROM Agents ORDER BY created_at ASC');
+        res.json(result.recordset);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch agents' });
+    }
+});
+
+// POST Create Agent
+app.post('/api/agents', async (req, res) => {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    try {
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('name', sql.NVarChar(255), name)
+            .input('system_prompt', sql.NVarChar(sql.MAX), "You are a recursive indexing assistant.")
+            .query(`
+                INSERT INTO Agents (name, system_prompt) 
+                OUTPUT INSERTED.*
+                VALUES (@name, @system_prompt)
+            `);
+        res.json(result.recordset[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create agent' });
+    }
+});
+
+// GET Agent Details
+app.get('/api/agents/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT * FROM Agents WHERE id = @id');
+        if (result.recordset.length > 0) {
+            res.json(result.recordset[0]);
+        } else {
+            res.status(404).json({ error: 'Agent not found' });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch agent' });
+    }
+});
+
+// PUT Update Agent Settings (including handover)
+app.put('/api/agents/:id', async (req, res) => {
+    const { id } = req.params;
+    const { system_prompt, history_limit, trigger_mode, output_mode, handover_to_agent_id } = req.body;
+    try {
+        const pool = await getPool();
+        let query = 'UPDATE Agents SET ';
+        const updates: string[] = [];
+
+        if (system_prompt !== undefined) {
+            updates.push('system_prompt = @system_prompt');
+            pool.request().input('system_prompt', sql.NVarChar(sql.MAX), system_prompt);
+        }
+        if (history_limit !== undefined) {
+            updates.push('history_limit = @history_limit');
+            pool.request().input('history_limit', sql.Int, history_limit);
+        }
+        if (trigger_mode !== undefined) {
+            updates.push('trigger_mode = @trigger_mode');
+            pool.request().input('trigger_mode', sql.VarChar(50), trigger_mode);
+        }
+        if (output_mode !== undefined) {
+            updates.push('output_mode = @output_mode');
+            pool.request().input('output_mode', sql.VarChar(50), output_mode);
+        }
+        if (handover_to_agent_id !== undefined) {
+            // handle null for clearing handover
+            updates.push('handover_to_agent_id = @handover_to_agent_id');
+            // sql.Int allows nulls if passed as null
+            pool.request().input('handover_to_agent_id', sql.Int, handover_to_agent_id);
+        }
+
+        if (updates.length > 0) {
+            query += updates.join(', ');
+            query += ' WHERE id = @id';
+
+            // Re-create request to bind parameters correctly including id
+            const request = pool.request();
+            request.input('id', sql.Int, id);
+            if (system_prompt !== undefined) request.input('system_prompt', sql.NVarChar(sql.MAX), system_prompt);
+            if (history_limit !== undefined) request.input('history_limit', sql.Int, history_limit);
+            if (trigger_mode !== undefined) request.input('trigger_mode', sql.VarChar(50), trigger_mode);
+            if (output_mode !== undefined) request.input('output_mode', sql.VarChar(50), output_mode);
+            if (handover_to_agent_id !== undefined) request.input('handover_to_agent_id', sql.Int, handover_to_agent_id);
+
+            await request.query(query);
+            res.json({ success: true });
+        } else {
+            res.json({ success: true, message: 'No changes' });
+        }
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update agent' });
+    }
+});
+
+// POST Handover Notes to another Agent
+app.post('/api/agents/:id/handover', async (req, res) => {
+    const { id } = req.params; // Sending Agent ID
+
+    try {
+        const pool = await getPool();
+
+        // 1. Get the target agent ID
+        const agentResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT handover_to_agent_id FROM Agents WHERE id = @id');
+
+        const targetAgentId = agentResult.recordset[0]?.handover_to_agent_id;
+
+        if (!targetAgentId) {
+            return res.status(400).json({ error: 'No handover target configured for this agent.' });
+        }
+
+        // 2. Fetch all notes from current agent
+        const notesResult = await pool.request()
+            .input('agent_id', sql.Int, id)
+            .query('SELECT content FROM Notes WHERE agent_id = @agent_id ORDER BY id ASC');
+
+        const notes = notesResult.recordset;
+
+        if (notes.length === 0) {
+            return res.status(400).json({ error: 'No notes to handover.' });
+        }
+
+        // 3. Aggregate notes
+        const aggregatedContent = notes.map((n: any) => n.content).join('\n\n---\n\n');
+        const handoverContent = `[HANDOVER FROM AGENT ${id}]\n\n${aggregatedContent}`;
+
+        // 4. Insert as single chunk for target agent
+        await pool.request()
+            .input('content', sql.NVarChar(sql.MAX), handoverContent)
+            .input('agent_id', sql.Int, targetAgentId)
+            .query(`
+                INSERT INTO TextChunks (content, agent_id, position) 
+                VALUES (@content, @agent_id, (SELECT ISNULL(MAX(position), 0) + 1 FROM TextChunks WHERE agent_id = @agent_id))
+             `);
+
+        res.json({ success: true, targetAgentId });
+
+    } catch (err) {
+        console.error('Handover failed:', err);
+        res.status(500).json({ error: 'Handover failed' });
+    }
+});
+
+
+// --- RESOURCE API (Agent-Aware) ---
+
+// GET Notes
+app.get('/api/notes', async (req, res) => {
+    const agentId = req.query.agentId;
+    if (!agentId) return res.status(400).json({ error: 'agentId required' });
+
+    try {
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT * FROM Notes WHERE agent_id = @agent_id ORDER BY id ASC');
         res.json(result.recordset);
     } catch (err) {
         console.error(err);
@@ -36,10 +205,14 @@ app.get('/api/notes', async (req, res) => {
 
 // GET Chunks
 app.get('/api/chunks', async (req, res) => {
+    const agentId = req.query.agentId;
+    if (!agentId) return res.status(400).json({ error: 'agentId required' });
+
     try {
         const pool = await getPool();
-        // Fallback to id if position is null (legacy/just added)
-        const result = await pool.request().query('SELECT * FROM TextChunks ORDER BY position ASC, id ASC');
+        const result = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT * FROM TextChunks WHERE agent_id = @agent_id ORDER BY position ASC, id ASC');
         res.json(result.recordset);
     } catch (err) {
         console.error(err);
@@ -49,9 +222,14 @@ app.get('/api/chunks', async (req, res) => {
 
 // GET Rules
 app.get('/api/rules', async (req, res) => {
+    const agentId = req.query.agentId;
+    if (!agentId) return res.status(400).json({ error: 'agentId required' });
+
     try {
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM OrchestrationRules ORDER BY position ASC, id ASC');
+        const result = await pool.request()
+            .input('agent_id', sql.Int, agentId)
+            .query('SELECT * FROM OrchestrationRules WHERE agent_id = @agent_id ORDER BY position ASC, id ASC');
         res.json(result.recordset);
     } catch (err) {
         console.error(err);
@@ -61,15 +239,18 @@ app.get('/api/rules', async (req, res) => {
 
 // POST Chunk
 app.post('/api/chunks', async (req, res) => {
-    const { content } = req.body;
+    const { content, agentId } = req.body;
     if (!content) return res.status(400).json({ error: 'Content is required' });
+    if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+
     try {
         const pool = await getPool();
         await pool.request()
             .input('content', sql.NVarChar(sql.MAX), content)
+            .input('agent_id', sql.Int, agentId)
             .query(`
-                INSERT INTO TextChunks (content, position) 
-                VALUES (@content, (SELECT ISNULL(MAX(position), 0) + 1 FROM TextChunks))
+                INSERT INTO TextChunks (content, agent_id, position) 
+                VALUES (@content, @agent_id, (SELECT ISNULL(MAX(position), 0) + 1 FROM TextChunks WHERE agent_id = @agent_id))
             `);
         res.json({ success: true });
     } catch (err) {
@@ -80,15 +261,18 @@ app.post('/api/chunks', async (req, res) => {
 
 // POST Rule
 app.post('/api/rules', async (req, res) => {
-    const { instruction } = req.body;
+    const { instruction, agentId } = req.body;
     if (!instruction) return res.status(400).json({ error: 'Instruction is required' });
+    if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+
     try {
         const pool = await getPool();
         await pool.request()
             .input('instruction', sql.NVarChar(sql.MAX), instruction)
+            .input('agent_id', sql.Int, agentId)
             .query(`
-                INSERT INTO OrchestrationRules (instruction, position) 
-                VALUES (@instruction, (SELECT ISNULL(MAX(position), 0) + 1 FROM OrchestrationRules))
+                INSERT INTO OrchestrationRules (instruction, agent_id, position) 
+                VALUES (@instruction, @agent_id, (SELECT ISNULL(MAX(position), 0) + 1 FROM OrchestrationRules WHERE agent_id = @agent_id))
             `);
         res.json({ success: true });
     } catch (err) {
@@ -99,8 +283,11 @@ app.post('/api/rules', async (req, res) => {
 
 // POST Process All (Batch)
 app.post('/api/process', async (req, res) => {
+    const { agentId } = req.body;
+    if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+
     try {
-        const result = await processChunks();
+        const result = await processChunks(agentId);
         res.json(result);
     } catch (err) {
         console.error(err);
@@ -110,10 +297,12 @@ app.post('/api/process', async (req, res) => {
 
 // POST Process Single Chunk
 app.post('/api/process-chunk', async (req, res) => {
-    const { chunkId } = req.body;
+    const { chunkId, agentId } = req.body;
     if (!chunkId) return res.status(400).json({ error: 'chunkId is required' });
+    if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+
     try {
-        const result = await processChunkById(chunkId);
+        const result = await processChunkById(chunkId, agentId);
         res.json(result);
     } catch (err) {
         console.error(err);
@@ -263,69 +452,11 @@ app.put('/api/rules/:id', async (req, res) => {
 });
 
 
-
-
-
-
 // Database Initialization
 async function initDb() {
-    try {
-        const pool = await getPool();
-
-        // 2. Add Position Column if not exists (TextChunks)
-        try {
-            await pool.request().query(`
-                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'TextChunks' AND COLUMN_NAME = 'position')
-                BEGIN
-                    ALTER TABLE TextChunks ADD position INT;
-                END
-                UPDATE TextChunks SET position = id WHERE position IS NULL;
-            `);
-        } catch (e) {
-            console.error('Error adding position to TextChunks:', e);
-        }
-
-        // 3. Add Position Column if not exists (OrchestrationRules)
-        try {
-            await pool.request().query(`
-                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'OrchestrationRules' AND COLUMN_NAME = 'position')
-                BEGIN
-                    ALTER TABLE OrchestrationRules ADD position INT;
-                END
-                UPDATE OrchestrationRules SET position = id WHERE position IS NULL;
-            `);
-        } catch (e) {
-            console.error('Error adding position to OrchestrationRules:', e);
-        }
-
-        // 4. Create Settings Table
-        await pool.request().query(`
-            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Settings')
-            CREATE TABLE Settings (
-                [key] VARCHAR(50) PRIMARY KEY,
-                [value] NVARCHAR(MAX)
-            )
-        `);
-
-        // 5. Seed Default System Prompt
-        const defaultPrompt = `You are a recursive indexing assistant.`;
-
-        const checkResult = await pool.request()
-            .input('key', sql.VarChar(50), 'system_prompt')
-            .query("SELECT [value] FROM Settings WHERE [key] = @key");
-
-        if (checkResult.recordset.length === 0) {
-            console.log('Seeding default system prompt...');
-            await pool.request()
-                .input('key', sql.VarChar(50), 'system_prompt')
-                .input('value', sql.NVarChar(sql.MAX), defaultPrompt)
-                .query("INSERT INTO Settings ([key], [value]) VALUES (@key, @value)");
-        }
-
-        console.log('Database initialized.');
-    } catch (err) {
-        console.error('Database initialization failed:', err);
-    }
+    // Skipping db init on server start as it's handled by init.ts script now generally, 
+    // but useful to keep ensure logic if needed. For now, assuming init.ts was run.
+    console.log('Server starting...');
 }
 
 // Initialize DB then start server
@@ -335,54 +466,11 @@ initDb().then(() => {
     })
 });
 
-// Settings API
-app.get('/api/settings/:key', async (req, res) => {
-    const { key } = req.params;
-    try {
-        const pool = await getPool();
-        const result = await pool.request()
-            .input('key', sql.VarChar(50), key)
-            .query("SELECT [value] FROM Settings WHERE [key] = @key");
+// Settings API - DEPRECATED / REMOVED in favor of Agent Settings
+// We can keep it or remove it. Better to remove to avoid confusion.
+// But wait, the frontend might still be calling it until we update.
+// Leaving it but it won't impact agents as they read from Agents table.
 
-        if (result.recordset.length > 0) {
-            res.json({ value: result.recordset[0].value });
-        } else {
-            res.json({ value: null });
-        }
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch setting' });
-    }
-});
-
-app.post('/api/settings', async (req, res) => {
-    const { key, value } = req.body;
-    if (!key) return res.status(400).json({ error: 'Key is required' });
-
-    try {
-        const pool = await getPool();
-        // Upsert (Merge or Check+Update) - doing simple check+update/insert for MSSQL compatibility
-        const check = await pool.request()
-            .input('key', sql.VarChar(50), key)
-            .query("SELECT [key] FROM Settings WHERE [key] = @key");
-
-        if (check.recordset.length > 0) {
-            await pool.request()
-                .input('key', sql.VarChar(50), key)
-                .input('value', sql.NVarChar(sql.MAX), value)
-                .query("UPDATE Settings SET [value] = @value WHERE [key] = @key");
-        } else {
-            await pool.request()
-                .input('key', sql.VarChar(50), key)
-                .input('value', sql.NVarChar(sql.MAX), value)
-                .query("INSERT INTO Settings ([key], [value]) VALUES (@key, @value)");
-        }
-        res.json({ success: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to save setting' });
-    }
-});
 
 import OpenAI from 'openai';
 app.post('/api/optimize-prompt', async (req, res) => {
