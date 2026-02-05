@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import toast from 'react-hot-toast';
 
 export default function Dashboard() {
     const [chunkInput, setChunkInput] = useState('');
@@ -68,11 +69,26 @@ export default function Dashboard() {
                     if (result.success && result.note) {
                         setNotes(prev => [...prev, result.note]);
                         processedCount++;
+                    } else if (result.error) {
+                        // Show specific toast for system prompt error
+                        if (result.error.includes("System Prompt not set")) {
+                            toast.error("Please set system prompt!");
+                            // Stop processing loop?
+                            break;
+                        } else {
+                            console.warn(`Chunk ${chunk.id} failed:`, result.error);
+                        }
                     } else {
-                        // Maybe it was skipped or failed
+                        // Maybe it was skipped
                     }
-                } catch (err) {
+                } catch (err: any) {
                     console.error(`Failed to process chunk ${chunk.id}`, err);
+                    // Check if it's the specific "System Prompt not set" error or just a failure
+                    // Since api.processChunk returns json, we need to check if result has error or if fetch threw.
+                    // Actually api.processChunk returns {success: boolean, note: ...} or throws?
+                    // api.ts uses fetch(). if server returns 500, response.ok is false? 
+                    // No, api.ts currently blindly does res.json(). If 500, it might throw on json parsing OR return {error: ...} object.
+                    // Let's assume server returns {error: "..."} on 500.
                 }
 
                 // Small delay for visual pacing
@@ -81,9 +97,10 @@ export default function Dashboard() {
             setStatus(`Processing complete. Processed ${processedCount} new notes.`);
             fetchData();
 
-        } catch (err) {
+        } catch (err: any) {
             console.error('Processing loop failed', err);
             setStatus('Processing failed.');
+            toast.error("Processing failed. Please check your settings.");
         } finally {
             setIsProcessing(false);
             setProcessingChunkId(null);
@@ -211,8 +228,8 @@ export default function Dashboard() {
                                 onClick={handleProcess}
                                 disabled={isProcessing}
                                 className={`w-full py-3 rounded-lg font-medium text-white shadow-lg transition transform active:scale-95 ${isProcessing
-                                        ? 'bg-gray-400 cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700'
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700'
                                     }`}
                             >
                                 {isProcessing ? 'Processing...' : 'Run Processing Loop'}

@@ -159,7 +159,6 @@ app.delete('/api/notes/:id', async (req, res) => {
     }
 });
 
-// Serve static files in production
 // Serve static files in production or Azure
 const isProduction = process.env.NODE_ENV === 'production' || !!process.env.WEBSITE_SITE_NAME;
 
@@ -172,6 +171,115 @@ if (isProduction) {
     })
 }
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`)
-})
+// Database Initialization
+async function initDb() {
+    try {
+        const pool = await getPool();
+
+        // 1. Create Settings Table
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Settings')
+            CREATE TABLE Settings (
+                [key] VARCHAR(50) PRIMARY KEY,
+                [value] NVARCHAR(MAX)
+            )
+        `);
+
+        // 2. Seed Default System Prompt
+        const defaultPrompt = `You are a recursive indexing assistant.`;
+
+        const checkResult = await pool.request()
+            .input('key', sql.VarChar(50), 'system_prompt')
+            .query("SELECT [value] FROM Settings WHERE [key] = @key");
+
+        if (checkResult.recordset.length === 0) {
+            console.log('Seeding default system prompt...');
+            await pool.request()
+                .input('key', sql.VarChar(50), 'system_prompt')
+                .input('value', sql.NVarChar(sql.MAX), defaultPrompt)
+                .query("INSERT INTO Settings ([key], [value]) VALUES (@key, @value)");
+        }
+
+        console.log('Database initialized.');
+    } catch (err) {
+        console.error('Database initialization failed:', err);
+    }
+}
+
+// Initialize DB then start server
+initDb().then(() => {
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`)
+    })
+});
+
+// Settings API
+app.get('/api/settings/:key', async (req, res) => {
+    const { key } = req.params;
+    try {
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('key', sql.VarChar(50), key)
+            .query("SELECT [value] FROM Settings WHERE [key] = @key");
+
+        if (result.recordset.length > 0) {
+            res.json({ value: result.recordset[0].value });
+        } else {
+            res.json({ value: null });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch setting' });
+    }
+});
+
+app.post('/api/settings', async (req, res) => {
+    const { key, value } = req.body;
+    if (!key) return res.status(400).json({ error: 'Key is required' });
+
+    try {
+        const pool = await getPool();
+        // Upsert (Merge or Check+Update) - doing simple check+update/insert for MSSQL compatibility
+        const check = await pool.request()
+            .input('key', sql.VarChar(50), key)
+            .query("SELECT [key] FROM Settings WHERE [key] = @key");
+
+        if (check.recordset.length > 0) {
+            await pool.request()
+                .input('key', sql.VarChar(50), key)
+                .input('value', sql.NVarChar(sql.MAX), value)
+                .query("UPDATE Settings SET [value] = @value WHERE [key] = @key");
+        } else {
+            await pool.request()
+                .input('key', sql.VarChar(50), key)
+                .input('value', sql.NVarChar(sql.MAX), value)
+                .query("INSERT INTO Settings ([key], [value]) VALUES (@key, @value)");
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to save setting' });
+    }
+});
+
+import OpenAI from 'openai';
+app.post('/api/optimize-prompt', async (req, res) => {
+    const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+
+    try {
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                { role: "system", content: "You are an expert prompt engineer. specialized in LLM orchestration. Rewrite the user's system prompt to be more clear, structured, and effective for a recursive context-accumulation task. Return ONLY the rewritten prompt text." },
+                { role: "user", content: prompt }
+            ],
+        });
+        res.json({ optimizedPrompt: completion.choices[0].message.content });
+    } catch (err) {
+        console.error("Optimize failed:", err);
+        res.status(500).json({ error: 'Failed to optimize prompt' });
+    }
+});
+

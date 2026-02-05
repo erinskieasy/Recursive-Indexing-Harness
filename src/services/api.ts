@@ -59,5 +59,25 @@ export const api = {
             body: JSON.stringify({ chunkId }),
         });
         return res.json();
+    },
+    async getSystemPrompt() {
+        const res = await fetch('/api/settings/system_prompt');
+        return res.json();
+    },
+    async updateSystemPrompt(value: string) {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'system_prompt', value }),
+        });
+        return res.json();
+    },
+    async optimizePrompt(prompt: string) {
+        const res = await fetch('/api/optimize-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+        });
+        return res.json();
     }
 };
