@@ -118,7 +118,7 @@ export async function processChunkById(chunkId: number) {
         }
 
         // 2. Fetch Rules
-        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY id ASC');
+        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY position ASC');
         const rules = rulesResult.recordset.map((r: any) => r.instruction).join('\n');
 
         const newNotes: any[] = [];
