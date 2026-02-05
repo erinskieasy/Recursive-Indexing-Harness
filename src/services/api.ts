@@ -52,6 +52,38 @@ export const api = {
         });
         return res.json();
     },
+    async updateChunk(id: number, content: string) {
+        const res = await fetch(`/api/chunks/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+        });
+        return res.json();
+    },
+    async updateRule(id: number, instruction: string) {
+        const res = await fetch(`/api/rules/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction }),
+        });
+        return res.json();
+    },
+    async reorderChunks(orderedIds: number[]) {
+        const res = await fetch('/api/chunks/reorder', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedIds }),
+        });
+        return res.json();
+    },
+    async reorderRules(orderedIds: number[]) {
+        const res = await fetch('/api/rules/reorder', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedIds }),
+        });
+        return res.json();
+    },
     async processChunk(chunkId: number) {
         const res = await fetch('/api/process-chunk', {
             method: 'POST',
@@ -77,6 +109,18 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt }),
+        });
+        return res.json();
+    },
+    async getHistoryLimit() {
+        const res = await fetch('/api/settings/history_limit');
+        return res.json();
+    },
+    async updateHistoryLimit(value: number) {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'history_limit', value: value.toString() }),
         });
         return res.json();
     }

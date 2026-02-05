@@ -9,25 +9,29 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [prompt, setPrompt] = useState('');
+    const [historyLimit, setHistoryLimit] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
-            fetchPrompt();
+            fetchSettings();
         }
     }, [isOpen]);
 
-    const fetchPrompt = async () => {
+    const fetchSettings = async () => {
         setIsLoading(true);
         try {
-            const res = await api.getSystemPrompt();
-            if (res.value) {
-                setPrompt(res.value);
-            }
+            const [promptRes, limitRes] = await Promise.all([
+                api.getSystemPrompt(),
+                api.getHistoryLimit()
+            ]);
+
+            if (promptRes.value) setPrompt(promptRes.value);
+            if (limitRes.value) setHistoryLimit(limitRes.value);
         } catch (err) {
             console.error(err);
-            toast.error("Failed to load System Prompt.");
+            toast.error("Failed to load settings.");
         } finally {
             setIsLoading(false);
         }
@@ -35,8 +39,24 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     const handleSave = async () => {
         try {
-            await api.updateSystemPrompt(prompt);
-            toast.success("System Prompt saved!");
+            await Promise.all([
+                api.updateSystemPrompt(prompt),
+                historyLimit ? api.updateHistoryLimit(parseInt(historyLimit)) : Promise.resolve()
+                // If empty, should we clear it? API update with empty string might fail parsing.
+                // For now, let's assume user sets a number. If they clear it, we might need a delete or nullable update.
+                // Let's support clearing if we send 0 or -1? Or just handle non-numeric.
+                // Simple version: only update if valid number.
+            ]);
+
+            if (historyLimit === '') {
+                // Try to clear it ?
+                // api.updateHistoryLimit(0) ? 
+                // Let's just update as is, but maybe the API expects a string value anyway.
+                // My api.ts updateHistoryLimit converts value to string.
+                await api.updateHistoryLimit(parseInt(historyLimit || '0'));
+            }
+
+            toast.success("Settings saved!");
             onClose();
         } catch (err) {
             console.error(err);
@@ -85,12 +105,31 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 <textarea
                                     value={prompt}
                                     onChange={(e) => setPrompt(e.target.value)}
-                                    className="w-full h-64 p-4 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm leading-relaxed text-gray-700"
+                                    className="w-full h-48 p-4 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm leading-relaxed text-gray-700 mb-4"
                                     placeholder="Enter system prompt..."
                                 />
                             </div>
 
-                            <div className="flex justify-between items-center text-sm text-gray-500">
+                            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Notes History Limit (Context Window)
+                                </label>
+                                <div className="flex items-center gap-4">
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={historyLimit}
+                                        onChange={(e) => setHistoryLimit(e.target.value)}
+                                        className="w-24 p-2 border rounded shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="All"
+                                    />
+                                    <span className="text-sm text-gray-500">
+                                        Limit the number of previous notes sent to AI. Leave empty for "All".
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-between items-center text-sm text-gray-500 mt-4">
                                 <p>Used for recursive context updates.</p>
                                 <button
                                     onClick={handleOptimize}

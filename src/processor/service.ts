@@ -45,17 +45,32 @@ export async function processChunks() {
 
             // Fetch all current notes for context (recursive accumulation)
             const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
-            const priorNotes = notesResult.recordset.map((n: any) => n.content).join('\n---\n');
 
-            // Fetch System Prompt from DB
-            const promptResult = await pool.request()
-                .input('key', sql.VarChar(50), 'system_prompt')
-                .query("SELECT [value] FROM Settings WHERE [key] = @key");
+            // Fetch System Prompt AND History Limit from DB
+            const [promptResult, limitResult] = await Promise.all([
+                pool.request()
+                    .input('key', sql.VarChar(50), 'system_prompt')
+                    .query("SELECT [value] FROM Settings WHERE [key] = @key"),
+                pool.request()
+                    .input('key', sql.VarChar(50), 'history_limit')
+                    .query("SELECT [value] FROM Settings WHERE [key] = @key")
+            ]);
 
             if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
                 throw new Error("System Prompt not set. Please configure it in Settings.");
             }
             const systemPrompt = promptResult.recordset[0].value;
+
+            let notesToUse: any[] = notesResult.recordset;
+            if (limitResult.recordset.length > 0 && limitResult.recordset[0].value) {
+                const limit = parseInt(limitResult.recordset[0].value);
+                if (!isNaN(limit) && limit > 0) {
+                    notesToUse = notesToUse.slice(-limit); // Take last N items
+                    console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
+                }
+            }
+
+            const priorNotes = notesToUse.map((n: any) => n.content).join('\n---\n');
 
             const userMessage = `You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
 Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.
@@ -118,7 +133,7 @@ export async function processChunkById(chunkId: number) {
         }
 
         // 2. Fetch Rules
-        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY id ASC');
+        const rulesResult = await pool.request().query('SELECT instruction FROM OrchestrationRules ORDER BY position ASC');
         const rules = rulesResult.recordset.map((r: any) => r.instruction).join('\n');
 
         const newNotes: any[] = [];
@@ -151,17 +166,32 @@ async function processChunkLogic(pool: any, chunk: any, rules: string, newNotes:
 
     // Fetch all current notes for context
     const notesResult = await pool.request().query('SELECT content FROM Notes ORDER BY id ASC');
-    const priorNotes = notesResult.recordset.map((n: any) => n.content).join('\n---\n');
 
-    // Fetch System Prompt from DB
-    const promptResult = await pool.request()
-        .input('key', sql.VarChar(50), 'system_prompt')
-        .query("SELECT [value] FROM Settings WHERE [key] = @key");
+    // Fetch System Prompt AND History Limit from DB
+    const [promptResult, limitResult] = await Promise.all([
+        pool.request()
+            .input('key', sql.VarChar(50), 'system_prompt')
+            .query("SELECT [value] FROM Settings WHERE [key] = @key"),
+        pool.request()
+            .input('key', sql.VarChar(50), 'history_limit')
+            .query("SELECT [value] FROM Settings WHERE [key] = @key")
+    ]);
 
     if (promptResult.recordset.length === 0 || !promptResult.recordset[0].value) {
         throw new Error("System Prompt not set. Please configure it in Settings.");
     }
     const systemPrompt = promptResult.recordset[0].value;
+
+    let notesToUse: any[] = notesResult.recordset;
+    if (limitResult.recordset.length > 0 && limitResult.recordset[0].value) {
+        const limit = parseInt(limitResult.recordset[0].value);
+        if (!isNaN(limit) && limit > 0) {
+            notesToUse = notesToUse.slice(-limit); // Take last N items
+            console.log(`Applying history limit: using last ${notesToUse.length} notes.`);
+        }
+    }
+
+    const priorNotes = notesToUse.map((n: any) => n.content).join('\n---\n');
 
     const userMessage = `You are given a set of Orchestration Rules and a history of Notes from previous text chunks.
 Your task is to read the New Input Chunk and generate a new Note based on the rules and the context of previous notes.
