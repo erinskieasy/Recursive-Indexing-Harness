@@ -67,7 +67,10 @@ app.post('/api/chunks', async (req, res) => {
         const pool = await getPool();
         await pool.request()
             .input('content', sql.NVarChar(sql.MAX), content)
-            .query('INSERT INTO TextChunks (content) VALUES (@content)');
+            .query(`
+                INSERT INTO TextChunks (content, position) 
+                VALUES (@content, (SELECT ISNULL(MAX(position), 0) + 1 FROM TextChunks))
+            `);
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -83,7 +86,10 @@ app.post('/api/rules', async (req, res) => {
         const pool = await getPool();
         await pool.request()
             .input('instruction', sql.NVarChar(sql.MAX), instruction)
-            .query('INSERT INTO OrchestrationRules (instruction) VALUES (@instruction)');
+            .query(`
+                INSERT INTO OrchestrationRules (instruction, position) 
+                VALUES (@instruction, (SELECT ISNULL(MAX(position), 0) + 1 FROM OrchestrationRules))
+            `);
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -160,6 +166,64 @@ app.delete('/api/notes/:id', async (req, res) => {
     }
 });
 
+// PUT Reorder Chunks
+app.put('/api/chunks/reorder', async (req, res) => {
+    const { orderedIds } = req.body; // Array of IDs in new order
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
+
+    try {
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        try {
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await transaction.request()
+                    .input('pos', sql.Int, i)
+                    .input('id', sql.Int, id)
+                    .query('UPDATE TextChunks SET position = @pos WHERE id = @id');
+            }
+            await transaction.commit();
+            res.json({ success: true });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        console.error('Reorder chunks failed:', err);
+        res.status(500).json({ error: 'Failed to reorder chunks' });
+    }
+});
+
+// PUT Reorder Rules
+app.put('/api/rules/reorder', async (req, res) => {
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
+
+    try {
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        try {
+            for (let i = 0; i < orderedIds.length; i++) {
+                const id = orderedIds[i];
+                await transaction.request()
+                    .input('pos', sql.Int, i)
+                    .input('id', sql.Int, id)
+                    .query('UPDATE OrchestrationRules SET position = @pos WHERE id = @id');
+            }
+            await transaction.commit();
+            res.json({ success: true });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        console.error('Reorder rules failed:', err);
+        res.status(500).json({ error: 'Failed to reorder rules' });
+    }
+});
+
 // PUT Update Chunk
 app.put('/api/chunks/:id', async (req, res) => {
     const { id } = req.params;
@@ -200,67 +264,7 @@ app.put('/api/rules/:id', async (req, res) => {
 
 
 
-// PUT Reorder Chunks
-app.put('/api/chunks/reorder', async (req, res) => {
-    const { orderedIds } = req.body; // Array of IDs in new order
-    console.log('Reordering chunks:', orderedIds);
-    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
 
-    try {
-        const pool = await getPool();
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-        try {
-            for (let i = 0; i < orderedIds.length; i++) {
-                const id = orderedIds[i];
-                await transaction.request()
-                    .input('pos', sql.Int, i)
-                    .input('id', sql.Int, id)
-                    .query('UPDATE TextChunks SET position = @pos WHERE id = @id');
-            }
-            await transaction.commit();
-            console.log('Reorder chunks committed successfully');
-            res.json({ success: true });
-        } catch (err) {
-            await transaction.rollback();
-            throw err;
-        }
-    } catch (err) {
-        console.error('Reorder chunks failed:', err);
-        res.status(500).json({ error: 'Failed to reorder chunks' });
-    }
-});
-
-// PUT Reorder Rules
-app.put('/api/rules/reorder', async (req, res) => {
-    const { orderedIds } = req.body;
-    console.log('Reordering rules:', orderedIds);
-    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'Invalid data' });
-
-    try {
-        const pool = await getPool();
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-        try {
-            for (let i = 0; i < orderedIds.length; i++) {
-                const id = orderedIds[i];
-                await transaction.request()
-                    .input('pos', sql.Int, i)
-                    .input('id', sql.Int, id)
-                    .query('UPDATE OrchestrationRules SET position = @pos WHERE id = @id');
-            }
-            await transaction.commit();
-            console.log('Reorder rules committed successfully');
-            res.json({ success: true });
-        } catch (err) {
-            await transaction.rollback();
-            throw err;
-        }
-    } catch (err) {
-        console.error('Reorder rules failed:', err);
-        res.status(500).json({ error: 'Failed to reorder rules' });
-    }
-});
 
 
 // Database Initialization

@@ -121,7 +121,6 @@ export default function Dashboard() {
 
             try {
                 await api.reorderChunks(newItems.map(i => i.id));
-                console.log('Chunk order saved');
             } catch (err) {
                 console.error('Failed to save chunk order', err);
                 toast.error('Failed to save order');
@@ -140,7 +139,6 @@ export default function Dashboard() {
 
             try {
                 await api.reorderRules(newItems.map(i => i.id));
-                console.log('Rule order saved');
             } catch (err) {
                 console.error('Failed to save rule order', err);
                 toast.error('Failed to save order');
