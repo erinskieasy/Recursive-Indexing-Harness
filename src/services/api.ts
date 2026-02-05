@@ -111,5 +111,17 @@ export const api = {
             body: JSON.stringify({ prompt }),
         });
         return res.json();
+    },
+    async getHistoryLimit() {
+        const res = await fetch('/api/settings/history_limit');
+        return res.json();
+    },
+    async updateHistoryLimit(value: number) {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'history_limit', value: value.toString() }),
+        });
+        return res.json();
     }
 };
