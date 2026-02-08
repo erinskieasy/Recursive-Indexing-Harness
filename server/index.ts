@@ -20,7 +20,7 @@ app.get('/api/health', (req, res) => {
 })
 
 import { getPool, sql } from '../src/db/index.js'; // Ensure extension if ESM
-import { processChunks, processChunkById } from '../src/processor/service.js';
+import { processChunks, processChunkById, performHandover } from '../src/processor/service.js';
 
 // --- AGENTS API ---
 
@@ -79,12 +79,16 @@ app.get('/api/agents/:id', async (req, res) => {
 // PUT Update Agent Settings (including handover)
 app.put('/api/agents/:id', async (req, res) => {
     const { id } = req.params;
-    const { system_prompt, history_limit, trigger_mode, output_mode, handover_to_agent_id } = req.body;
+    const { name, system_prompt, history_limit, trigger_mode, output_mode, handover_to_agent_id, handover_mode } = req.body;
     try {
         const pool = await getPool();
         let query = 'UPDATE Agents SET ';
         const updates: string[] = [];
 
+        if (name !== undefined) {
+            updates.push('name = @name');
+            pool.request().input('name', sql.VarChar(255), name);
+        }
         if (system_prompt !== undefined) {
             updates.push('system_prompt = @system_prompt');
             pool.request().input('system_prompt', sql.NVarChar(sql.MAX), system_prompt);
@@ -107,6 +111,10 @@ app.put('/api/agents/:id', async (req, res) => {
             // sql.Int allows nulls if passed as null
             pool.request().input('handover_to_agent_id', sql.Int, handover_to_agent_id);
         }
+        if (handover_mode !== undefined) {
+            updates.push('handover_mode = @handover_mode');
+            pool.request().input('handover_mode', sql.VarChar(50), handover_mode);
+        }
 
         if (updates.length > 0) {
             query += updates.join(', ');
@@ -115,11 +123,13 @@ app.put('/api/agents/:id', async (req, res) => {
             // Re-create request to bind parameters correctly including id
             const request = pool.request();
             request.input('id', sql.Int, id);
+            if (name !== undefined) request.input('name', sql.VarChar(255), name);
             if (system_prompt !== undefined) request.input('system_prompt', sql.NVarChar(sql.MAX), system_prompt);
             if (history_limit !== undefined) request.input('history_limit', sql.Int, history_limit);
             if (trigger_mode !== undefined) request.input('trigger_mode', sql.VarChar(50), trigger_mode);
             if (output_mode !== undefined) request.input('output_mode', sql.VarChar(50), output_mode);
             if (handover_to_agent_id !== undefined) request.input('handover_to_agent_id', sql.Int, handover_to_agent_id);
+            if (handover_mode !== undefined) request.input('handover_mode', sql.VarChar(50), handover_mode);
 
             await request.query(query);
             res.json({ success: true });
@@ -133,13 +143,60 @@ app.put('/api/agents/:id', async (req, res) => {
     }
 });
 
+
+// DELETE Agent (and all related data)
+app.delete('/api/agents/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+
+        await transaction.begin();
+        try {
+            // 1. Nullify handover_to_agent_id in other agents that point to this one
+            await transaction.request()
+                .input('id', sql.Int, id)
+                .query('UPDATE Agents SET handover_to_agent_id = NULL WHERE handover_to_agent_id = @id');
+
+            // 2. Delete Notes
+            await transaction.request()
+                .input('id', sql.Int, id)
+                .query('DELETE FROM Notes WHERE agent_id = @id');
+
+            // 3. Delete TextChunks
+            await transaction.request()
+                .input('id', sql.Int, id)
+                .query('DELETE FROM TextChunks WHERE agent_id = @id');
+
+            // 4. Delete OrchestrationRules
+            await transaction.request()
+                .input('id', sql.Int, id)
+                .query('DELETE FROM OrchestrationRules WHERE agent_id = @id');
+
+            // 5. Delete Agent
+            await transaction.request()
+                .input('id', sql.Int, id)
+                .query('DELETE FROM Agents WHERE id = @id');
+
+            await transaction.commit();
+            res.json({ success: true });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        console.error('Delete agent failed:', err);
+        res.status(500).json({ error: 'Failed to delete agent' });
+    }
+});
+
 // POST Handover Notes to another Agent
+
 app.post('/api/agents/:id/handover', async (req, res) => {
     const { id } = req.params; // Sending Agent ID
 
     try {
         const pool = await getPool();
-
         // 1. Get the target agent ID
         const agentResult = await pool.request()
             .input('id', sql.Int, id)
@@ -151,31 +208,12 @@ app.post('/api/agents/:id/handover', async (req, res) => {
             return res.status(400).json({ error: 'No handover target configured for this agent.' });
         }
 
-        // 2. Fetch all notes from current agent
-        const notesResult = await pool.request()
-            .input('agent_id', sql.Int, id)
-            .query('SELECT content FROM Notes WHERE agent_id = @agent_id ORDER BY id ASC');
-
-        const notes = notesResult.recordset;
-
-        if (notes.length === 0) {
-            return res.status(400).json({ error: 'No notes to handover.' });
+        const success = await performHandover(parseInt(id), targetAgentId);
+        if (success) {
+            res.json({ success: true, targetAgentId });
+        } else {
+            res.status(400).json({ error: 'No notes to handover or handover failed.' });
         }
-
-        // 3. Aggregate notes
-        const aggregatedContent = notes.map((n: any) => n.content).join('\n\n---\n\n');
-        const handoverContent = `[HANDOVER FROM AGENT ${id}]\n\n${aggregatedContent}`;
-
-        // 4. Insert as single chunk for target agent
-        await pool.request()
-            .input('content', sql.NVarChar(sql.MAX), handoverContent)
-            .input('agent_id', sql.Int, targetAgentId)
-            .query(`
-                INSERT INTO TextChunks (content, agent_id, position) 
-                VALUES (@content, @agent_id, (SELECT ISNULL(MAX(position), 0) + 1 FROM TextChunks WHERE agent_id = @agent_id))
-             `);
-
-        res.json({ success: true, targetAgentId });
 
     } catch (err) {
         console.error('Handover failed:', err);

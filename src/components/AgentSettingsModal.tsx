@@ -14,6 +14,7 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
     const [triggerMode, setTriggerMode] = useState('manual');
     const [outputMode, setOutputMode] = useState('cycle');
     const [handoverTargetId, setHandoverTargetId] = useState<number | null>(null);
+    const [handoverMode, setHandoverMode] = useState('aggregate'); // 'aggregate' | 'immediate'
     const [isLoading, setIsLoading] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [availableAgents, setAvailableAgents] = useState<any[]>([]);
@@ -28,10 +29,6 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
     const fetchAgents = async () => {
         try {
             const data = await api.getAgents();
-            // Filter out current agent to prevent self-selection in UI (though backend supports it)
-            // Actually, user might want self-recursion? "Hands back to agent 1".
-            // If agent 1 hands to agent 1, it just re-loops. That's fine.
-            // Let's allow all agents.
             setAvailableAgents(data);
         } catch (err) {
             console.error('Failed to fetch agents for handover', err);
@@ -47,6 +44,7 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
             setTriggerMode(agent.trigger_mode || 'manual');
             setOutputMode(agent.output_mode || 'cycle');
             setHandoverTargetId(agent.handover_to_agent_id || null);
+            setHandoverMode(agent.handover_mode || 'aggregate');
         } catch (err) {
             console.error('Failed to fetch settings', err);
             toast.error('Failed to load settings');
@@ -62,7 +60,8 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
                 history_limit: historyLimit,
                 trigger_mode: triggerMode,
                 output_mode: outputMode,
-                handover_to_agent_id: handoverTargetId
+                handover_to_agent_id: handoverTargetId,
+                handover_mode: handoverMode
             });
             toast.success('Settings saved');
             onClose();
@@ -161,26 +160,60 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
                             </div>
 
                             {/* Handover Configuration */}
-                            <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
-                                <label className="block text-sm font-bold text-orange-800 mb-2 flex items-center gap-2">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 23l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
-                                    Handover Output To
-                                </label>
-                                <select
-                                    value={handoverTargetId === null ? '' : handoverTargetId}
-                                    onChange={(e) => setHandoverTargetId(e.target.value ? parseInt(e.target.value) : null)}
-                                    className="w-full rounded-lg border-orange-200 shadow-sm focus:border-orange-500 focus:ring-orange-500 p-2 bg-white"
-                                >
-                                    <option value="">-- No Handover --</option>
-                                    {availableAgents.map(a => (
-                                        <option key={a.id} value={a.id}>
-                                            {a.id === agentId ? `${a.name} (Self-Recursion)` : a.name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-orange-600 mt-2">
-                                    All generated notes will be bundled into a single text chunk and sent to the selected agent when you click "Handover".
-                                </p>
+                            <div className="bg-orange-50 p-4 rounded-lg border border-orange-100 space-y-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-orange-800 mb-2 flex items-center gap-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 23l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+                                        Handover Output To
+                                    </label>
+                                    <select
+                                        value={handoverTargetId === null ? '' : handoverTargetId}
+                                        onChange={(e) => setHandoverTargetId(e.target.value ? parseInt(e.target.value) : null)}
+                                        className="w-full rounded-lg border-orange-200 shadow-sm focus:border-orange-500 focus:ring-orange-500 p-2 bg-white"
+                                    >
+                                        <option value="">-- No Handover --</option>
+                                        {availableAgents.map(a => (
+                                            <option key={a.id} value={a.id}>
+                                                {a.id === agentId ? `${a.name} (Self-Recursion)` : a.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {handoverTargetId !== null && (
+                                    <div className="pl-4 border-l-2 border-orange-200">
+                                        <label className="block text-sm font-semibold text-orange-800 mb-1">
+                                            Handover Mode
+                                        </label>
+                                        <div className="flex gap-4">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    value="aggregate"
+                                                    checked={handoverMode === 'aggregate'}
+                                                    onChange={(e) => setHandoverMode(e.target.value)}
+                                                    className="text-orange-600 focus:ring-orange-500"
+                                                />
+                                                <span className="text-sm text-gray-700">Aggregate (Manual Batch)</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    value="immediate"
+                                                    checked={handoverMode === 'immediate'}
+                                                    onChange={(e) => setHandoverMode(e.target.value)}
+                                                    className="text-orange-600 focus:ring-orange-500"
+                                                />
+                                                <span className="text-sm text-gray-700">Immediate (Per Note)</span>
+                                            </label>
+                                        </div>
+                                        <p className="text-xs text-orange-600 mt-2">
+                                            {handoverMode === 'aggregate'
+                                                ? 'Notes accumulate here until you click "Handover" manually.'
+                                                : 'Every new note generated is immediately sent to the target agent as a new chunk.'}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}

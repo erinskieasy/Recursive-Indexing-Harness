@@ -28,6 +28,11 @@ async function initDB() {
         ALTER TABLE Agents ADD handover_to_agent_id INT NULL;
         ALTER TABLE Agents ADD CONSTRAINT FK_Agents_Handover FOREIGN KEY (handover_to_agent_id) REFERENCES Agents(id);
       END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Agents' AND COLUMN_NAME = 'handover_mode')
+      BEGIN
+        ALTER TABLE Agents ADD handover_mode VARCHAR(50) DEFAULT 'aggregate';
+      END
     `);
     console.log('Ensured Agents table exists and has all columns.');
 

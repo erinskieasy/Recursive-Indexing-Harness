@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import toast from 'react-hot-toast';
 import EditModal from './EditModal';
@@ -60,11 +60,15 @@ export default function Dashboard() {
     const [chunks, setChunks] = useState<any[]>([]);
     const [rules, setRules] = useState<any[]>([]);
     const [notes, setNotes] = useState<any[]>([]);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [processingChunkId, setProcessingChunkId] = useState<number | null>(null);
-    const [status, setStatus] = useState('');
+
+    // Per-agent processing state
+    const [agentStates, setAgentStates] = useState<Record<number, { isProcessing: boolean, processingChunkId: number | null, status: string }>>({});
+
     const [editingItem, setEditingItem] = useState<{ type: 'chunk' | 'rule', id: number, content: string } | null>(null);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+    // Ref to track the *current* selected agent during async operations to prevent stale closures
+    const activeAgentRef = useRef<number | null>(null);
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -74,6 +78,7 @@ export default function Dashboard() {
     );
 
     useEffect(() => {
+        activeAgentRef.current = selectedAgentId; // Update ref whenever selection changes
         if (selectedAgentId) {
             fetchData();
         } else {
@@ -84,7 +89,22 @@ export default function Dashboard() {
         }
     }, [selectedAgentId]);
 
-    const fetchData = async () => {
+    // Polling for background updates (e.g. from auto-handover agents)
+    useEffect(() => {
+        if (!selectedAgentId) return;
+
+        const interval = setInterval(() => {
+            // Only poll if NOT currently running a manual process loop (to avoid race conditions/jitters)
+            // Or better, just poll silently.
+            if (!agentStates[selectedAgentId]?.isProcessing) {
+                fetchData(true); // silent fetch
+            }
+        }, 3000); // 3 seconds
+
+        return () => clearInterval(interval);
+    }, [selectedAgentId, agentStates]);
+
+    const fetchData = async (silent = false) => {
         if (!selectedAgentId) return;
         try {
             const [c, r, n] = await Promise.all([
@@ -92,11 +112,16 @@ export default function Dashboard() {
                 api.getRules(selectedAgentId),
                 api.getNotes(selectedAgentId)
             ]);
-            setChunks(c);
-            setRules(r);
-            setNotes(n);
+
+            // Should probably check if we are still on the same agent before setting state?
+            // Yes, checking ref is safer, though useEffect cleanup usually handles this if we didn't use async
+            if (activeAgentRef.current === selectedAgentId) {
+                setChunks(c);
+                setRules(r);
+                setNotes(n);
+            }
         } catch (err) {
-            console.error('Failed to fetch data', err);
+            if (!silent) console.error('Failed to fetch data', err);
         }
     };
 
@@ -167,34 +192,44 @@ export default function Dashboard() {
     };
 
 
+    const updateAgentState = (agentId: number, newState: Partial<{ isProcessing: boolean, processingChunkId: number | null, status: string }>) => {
+        setAgentStates(prev => ({
+            ...prev,
+            [agentId]: { ...(prev[agentId] || { isProcessing: false, processingChunkId: null, status: '' }), ...newState }
+        }));
+    };
+
     const handleProcess = async () => {
         if (!selectedAgentId) return;
-        setIsProcessing(true);
-        setStatus('Starting sequential processing...');
+        const currentAgentId = selectedAgentId; // Capture for closure
+
+        updateAgentState(currentAgentId, { isProcessing: true, status: 'Starting sequential processing...' });
 
         try {
             let processedCount = 0;
             // Iterate through chunks sequentially
-            for (const chunk of chunks) {
-                setProcessingChunkId(chunk.id);
-                // setStatus(`Processing chunk #${chunk.id}...`);
+            for (const chunk of chunks) { // Note: using 'chunks' from state might be stale if user switches agents fast? 
+                // ideally we should pass chunks in or fetch fresh. But for now this is okay as long as we don't switch MID-loop and expect 'chunks' to change for the loop.
+                // actually, 'chunks' variable binds to the render scope. If we change agent, 'chunks' updates. 
+                // but this function closes over the 'chunks' at the time of click. So it is safe for THAT agent.
+
+                updateAgentState(currentAgentId, { processingChunkId: chunk.id });
 
                 try {
-                    const result = await api.processChunk(chunk.id, selectedAgentId);
+                    const result = await api.processChunk(chunk.id, currentAgentId);
                     if (result.success && result.note) {
-                        setNotes(prev => [...prev, result.note]);
+                        // Only update notes if we are still looking at this agent (use Ref for truth)
+                        if (activeAgentRef.current === currentAgentId) {
+                            setNotes(prev => [...prev, result.note]);
+                        }
                         processedCount++;
                     } else if (result.error) {
-                        // Show specific toast for system prompt error
                         if (result.error.includes("System Prompt not set")) {
                             toast.error("Please set system prompt!");
-                            // Stop processing loop?
                             break;
                         } else {
                             console.warn(`Chunk ${chunk.id} failed:`, result.error);
                         }
-                    } else {
-                        // Maybe it was skipped
                     }
                 } catch (err: any) {
                     console.error(`Failed to process chunk ${chunk.id}`, err);
@@ -203,18 +238,22 @@ export default function Dashboard() {
                 // Small delay for visual pacing
                 await new Promise(r => setTimeout(r, 500));
             }
-            setStatus(`Processing complete. Processed ${processedCount} new notes.`);
-            fetchData();
+            updateAgentState(currentAgentId, { status: `Processing complete. Processed ${processedCount} new notes.` });
+
+            if (selectedAgentId === currentAgentId) {
+                fetchData();
+            }
 
         } catch (err: any) {
             console.error('Processing loop failed', err);
-            setStatus('Processing failed.');
-            toast.error("Processing failed. Please check your settings.");
+            updateAgentState(currentAgentId, { status: 'Processing failed.' });
+            toast.error("Processing failed.");
         } finally {
-            setIsProcessing(false);
-            setProcessingChunkId(null);
+            updateAgentState(currentAgentId, { isProcessing: false, processingChunkId: null });
         }
     };
+
+    const currentAgentState = selectedAgentId ? (agentStates[selectedAgentId] || { isProcessing: false, processingChunkId: null, status: '' }) : { isProcessing: false, processingChunkId: null, status: '' };
 
     return (
         <div className="min-h-screen bg-gray-50 font-sans text-gray-800 flex flex-col">
@@ -223,6 +262,7 @@ export default function Dashboard() {
             <AgentPanel
                 onAgentSelect={(id) => setSelectedAgentId(id)}
                 selectedAgentId={selectedAgentId}
+                agentStates={agentStates}
             />
 
             <div className="flex-1 p-8">
@@ -332,17 +372,17 @@ export default function Dashboard() {
                                                     {chunks.map((c) => (
                                                         <SortableItem key={c.id} id={c.id}>
                                                             <div className={`text-sm p-2 rounded border border-gray-100 flex justify-between items-center group/item w-full
-                                                                ${processingChunkId === c.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50'}
+                                                                ${currentAgentState.processingChunkId === c.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50'}
                                                                 transition-colors duration-200
                                                             `}>
                                                                 <div className="flex items-center gap-3 overflow-hidden flex-1">
-                                                                    {processingChunkId === c.id && (
+                                                                    {currentAgentState.processingChunkId === c.id && (
                                                                         <svg className="animate-spin h-4 w-4 text-blue-500 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                                                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                                                         </svg>
                                                                     )}
-                                                                    <span className={`truncate ${processingChunkId === c.id ? 'font-medium text-blue-700' : 'text-gray-700'}`}>{c.content}</span>
+                                                                    <span className={`truncate ${currentAgentState.processingChunkId === c.id ? 'font-medium text-blue-700' : 'text-gray-700'}`}>{c.content}</span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition">
                                                                     <button
@@ -422,21 +462,21 @@ export default function Dashboard() {
                             <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                                 <div className="flex items-center justify-between mb-4">
                                     <h2 className="text-xl font-semibold flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                                        <span className={`w-2 h-2 rounded-full ${currentAgentState.isProcessing ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></span>
                                         Processing
                                     </h2>
-                                    {status && <span className="text-sm text-gray-500 animate-pulse">{status}</span>}
+                                    {currentAgentState.status && <span className="text-sm text-gray-500 animate-pulse">{currentAgentState.status}</span>}
                                 </div>
 
                                 <button
                                     onClick={handleProcess}
-                                    disabled={isProcessing || !selectedAgentId}
-                                    className={`w-full py-3 rounded-lg font-medium text-white shadow-lg transition transform active:scale-95 ${isProcessing || !selectedAgentId
+                                    disabled={currentAgentState.isProcessing || !selectedAgentId}
+                                    className={`w-full py-3 rounded-lg font-medium text-white shadow-lg transition transform active:scale-95 ${currentAgentState.isProcessing || !selectedAgentId
                                         ? 'bg-gray-400 cursor-not-allowed'
                                         : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700'
                                         }`}
                                 >
-                                    {isProcessing ? 'Processing...' : 'Run Processing Loop'}
+                                    {currentAgentState.isProcessing ? 'Processing in Background...' : 'Run Processing Loop'}
                                 </button>
 
                                 <div className="mt-4 pt-4 border-t border-gray-100">

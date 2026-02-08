@@ -9,13 +9,18 @@ interface Agent {
 interface AgentPanelProps {
     onAgentSelect: (agentId: number) => void;
     selectedAgentId: number | null;
+    agentStates?: Record<number, { isProcessing: boolean }>;
 }
 
-export default function AgentPanel({ onAgentSelect, selectedAgentId }: AgentPanelProps) {
+export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates }: AgentPanelProps) {
     const [agents, setAgents] = useState<Agent[]>([]);
     const [isExpanded, setIsExpanded] = useState(true);
     const [newAgentName, setNewAgentName] = useState('');
     const [isAdding, setIsAdding] = useState(false);
+
+    // Renaming state
+    const [editingAgentId, setEditingAgentId] = useState<number | null>(null);
+    const [editingName, setEditingName] = useState('');
 
     useEffect(() => {
         fetchAgents();
@@ -44,6 +49,63 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId }: AgentPane
             onAgentSelect(newAgent.id);
         } catch (err) {
             console.error('Failed to create agent', err);
+        }
+    };
+
+    const handleDeleteAgent = async (e: React.MouseEvent, agentId: number, agentName: string) => {
+        e.stopPropagation(); // Prevent selection
+        if (!confirm(`Are you sure you want to delete agent "${agentName}"? This will delete ALL associated chunks, rules, and notes.`)) {
+            return;
+        }
+
+        try {
+            await api.deleteAgent(agentId);
+            const updatedAgents = agents.filter(a => a.id !== agentId);
+            setAgents(updatedAgents);
+
+            if (selectedAgentId === agentId) {
+                // If we deleted the active agent, switch to first available or none
+                if (updatedAgents.length > 0) {
+                    onAgentSelect(updatedAgents[0].id);
+                } else {
+                    onAgentSelect(0); // or null/handle empty state
+                }
+            }
+        } catch (err) {
+            console.error('Failed to delete agent', err);
+            alert('Failed to delete agent');
+        }
+    };
+
+    const startEditing = (e: React.MouseEvent, agent: Agent) => {
+        e.stopPropagation();
+        setEditingAgentId(agent.id);
+        setEditingName(agent.name);
+    };
+
+    const handleRename = async (agentId: number) => {
+        if (!editingName.trim()) {
+            setEditingAgentId(null);
+            return;
+        }
+
+        try {
+            // Optimistic update
+            setAgents(agents.map(a => a.id === agentId ? { ...a, name: editingName } : a));
+            setEditingAgentId(null);
+
+            await api.updateAgent(agentId, { name: editingName });
+        } catch (err) {
+            console.error('Failed to rename agent', err);
+            // Revert on failure? For now just log
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent, agentId: number) => {
+        if (e.key === 'Enter') {
+            handleRename(agentId);
+        } else if (e.key === 'Escape') {
+            setEditingAgentId(null);
         }
     };
 
@@ -84,18 +146,53 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId }: AgentPane
                                 key={agent.id}
                                 onClick={() => onAgentSelect(agent.id)}
                                 className={`
-                                    relative flex items-center justify-between min-w-[150px] p-3 rounded-lg border cursor-pointer transition select-none
+                                    relative flex items-center justify-between min-w-[150px] p-3 rounded-lg border cursor-pointer transition select-none group
                                     ${selectedAgentId === agent.id
                                         ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-100 shadow-sm'
                                         : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-sm'}
                                 `}
                             >
-                                <span className={`font-medium ${selectedAgentId === agent.id ? 'text-blue-700' : 'text-gray-700'}`}>
-                                    {agent.name}
-                                </span>
-                                {selectedAgentId === agent.id && (
-                                    <span className="w-2 h-2 rounded-full bg-blue-500 ml-2"></span>
+                                {editingAgentId === agent.id ? (
+                                    <input
+                                        type="text"
+                                        value={editingName}
+                                        onChange={(e) => setEditingName(e.target.value)}
+                                        onBlur={() => handleRename(agent.id)}
+                                        onKeyDown={(e) => handleKeyDown(e, agent.id)}
+                                        autoFocus
+                                        className="text-sm font-medium border border-blue-300 rounded px-1 py-0.5 w-[120px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                ) : (
+                                    <span className={`font-medium ${selectedAgentId === agent.id ? 'text-blue-700' : 'text-gray-700'}`}>
+                                        {agent.name}
+                                    </span>
                                 )}
+
+                                <div className="flex items-center gap-1">
+                                    {!editingAgentId && (
+                                        <button
+                                            onClick={(e) => startEditing(e, agent)}
+                                            className="text-gray-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition p-1"
+                                            title="Rename Agent"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={(e) => handleDeleteAgent(e, agent.id, agent.name)}
+                                        className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1"
+                                        title="Delete Agent"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                    </button>
+                                    {selectedAgentId === agent.id && (
+                                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                    )}
+                                    {agentStates?.[agent.id]?.isProcessing && selectedAgentId !== agent.id && (
+                                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Processing..."></span>
+                                    )}
+                                </div>
                             </div>
                         ))}
 

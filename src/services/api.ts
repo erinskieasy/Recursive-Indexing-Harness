@@ -30,6 +30,13 @@ export const api = {
         return response.json();
     },
 
+    deleteAgent: async (id: number) => {
+        const response = await fetch(`${API_URL}/agents/${id}`, {
+            method: 'DELETE',
+        });
+        return response.json();
+    },
+
     triggerHandover: async (agentId: number) => {
         const response = await fetch(`${API_URL}/agents/${agentId}/handover`, {
             method: 'POST',
