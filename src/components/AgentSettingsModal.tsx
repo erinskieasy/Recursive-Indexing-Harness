@@ -15,6 +15,10 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
     const [outputMode, setOutputMode] = useState('cycle');
     const [handoverTargetId, setHandoverTargetId] = useState<number | null>(null);
     const [handoverMode, setHandoverMode] = useState('aggregate'); // 'aggregate' | 'immediate'
+    const [preProcessActions, setPreProcessActions] = useState('[]');
+    const [postProcessActions, setPostProcessActions] = useState('[]');
+    const [assetPromptContextEnabled, setAssetPromptContextEnabled] = useState(false);
+    const [assetPromptContextHeader, setAssetPromptContextHeader] = useState('Asset Context');
     const [isLoading, setIsLoading] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [availableAgents, setAvailableAgents] = useState<any[]>([]);
@@ -45,6 +49,10 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
             setOutputMode(agent.output_mode || 'cycle');
             setHandoverTargetId(agent.handover_to_agent_id || null);
             setHandoverMode(agent.handover_mode || 'aggregate');
+            setPreProcessActions(agent.pre_process_asset_actions_json || '[]');
+            setPostProcessActions(agent.post_process_asset_actions_json || '[]');
+            setAssetPromptContextEnabled(!!agent.asset_prompt_context_enabled);
+            setAssetPromptContextHeader(agent.asset_prompt_context_header || 'Asset Context');
         } catch (err) {
             console.error('Failed to fetch settings', err);
             toast.error('Failed to load settings');
@@ -61,7 +69,11 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
                 trigger_mode: triggerMode,
                 output_mode: outputMode,
                 handover_to_agent_id: handoverTargetId,
-                handover_mode: handoverMode
+                handover_mode: handoverMode,
+                pre_process_asset_actions_json: preProcessActions,
+                post_process_asset_actions_json: postProcessActions,
+                asset_prompt_context_enabled: assetPromptContextEnabled,
+                asset_prompt_context_header: assetPromptContextHeader
             });
             toast.success('Settings saved');
             onClose();
@@ -156,6 +168,37 @@ export default function AgentSettingsModal({ isOpen, onClose, agentId }: AgentSe
                                         <option value="manual">Manual (Button Press)</option>
                                         <option value="auto">Automatic (On New Chunk)</option>
                                     </select>
+                                </div>
+                            </div>
+
+
+                            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-3">
+                                <h3 className="text-sm font-semibold text-blue-800">Asset Lifecycle Configuration</h3>
+                                <label className="block text-xs font-medium text-gray-700">Pre-Process Asset Actions JSON</label>
+                                <textarea
+                                    value={preProcessActions}
+                                    onChange={(e) => setPreProcessActions(e.target.value)}
+                                    className="w-full h-24 rounded border border-blue-200 p-2 font-mono text-xs"
+                                    placeholder='[{"type":"read","assetLogicalName":"customer_profile","limit":5}]'
+                                />
+                                <label className="block text-xs font-medium text-gray-700">Post-Process Asset Actions JSON</label>
+                                <textarea
+                                    value={postProcessActions}
+                                    onChange={(e) => setPostProcessActions(e.target.value)}
+                                    className="w-full h-24 rounded border border-blue-200 p-2 font-mono text-xs"
+                                    placeholder='[{"type":"write","assetLogicalName":"processing_log","textTemplate":"{{latest_note}}"}]'
+                                />
+                                <div className="flex items-center gap-4">
+                                    <label className="flex items-center gap-2 text-sm">
+                                        <input type="checkbox" checked={assetPromptContextEnabled} onChange={(e) => setAssetPromptContextEnabled(e.target.checked)} />
+                                        Include Asset Context in Prompt
+                                    </label>
+                                    <input
+                                        value={assetPromptContextHeader}
+                                        onChange={(e) => setAssetPromptContextHeader(e.target.value)}
+                                        className="rounded border p-2 text-sm"
+                                        placeholder="Prompt section header"
+                                    />
                                 </div>
                             </div>
 

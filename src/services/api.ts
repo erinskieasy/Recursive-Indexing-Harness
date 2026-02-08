@@ -154,6 +154,79 @@ export const api = {
         return response.json();
     },
 
+
+    // Assets
+    getAssetTables: async () => {
+        const response = await fetch(`${API_URL}/assets/tables`);
+        return response.json();
+    },
+
+    createAssetTable: async (payload: { logical_name: string, display_name: string, description?: string }) => {
+        const response = await fetch(`${API_URL}/assets/tables`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return response.json();
+    },
+
+    updateAssetTable: async (id: number, payload: { display_name: string, description?: string }) => {
+        const response = await fetch(`${API_URL}/assets/tables/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return response.json();
+    },
+
+    deleteAssetTable: async (id: number) => {
+        const response = await fetch(`${API_URL}/assets/tables/${id}`, {
+            method: 'DELETE',
+        });
+        return response.json();
+    },
+
+    getAgentAssetBindings: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/agents/${agentId}/assets-bindings`);
+        return response.json();
+    },
+
+    saveAgentAssetBindings: async (agentId: number, bindings: any[]) => {
+        const response = await fetch(`${API_URL}/agents/${agentId}/assets-bindings`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bindings }),
+        });
+        return response.json();
+    },
+
+    readAssetRows: async (logicalName: string, agentId: number, limit = 10) => {
+        const response = await fetch(`${API_URL}/assets/${logicalName}/read`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agentId, limit }),
+        });
+        return response.json();
+    },
+
+    searchAssetRows: async (logicalName: string, query: string, limit = 10) => {
+        const response = await fetch(`${API_URL}/assets/${logicalName}/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, limit }),
+        });
+        return response.json();
+    },
+
+    writeAssetRow: async (logicalName: string, content: string, metadata?: Record<string, unknown>) => {
+        const response = await fetch(`${API_URL}/assets/${logicalName}/write`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content, metadata }),
+        });
+        return response.json();
+    },
+
     // Utilities
     optimizePrompt: async (prompt: string) => {
         const response = await fetch(`${API_URL}/optimize-prompt`, {

@@ -21,6 +21,7 @@ app.get('/api/health', (req, res) => {
 
 import { getPool, sql } from '../src/db/index.js'; // Ensure extension if ESM
 import { processChunks, processChunkById, performHandover } from '../src/processor/service.js';
+import { ensureAssetStorageTable, getAssetByLogicalName, executeAssetRead, executeAssetSearch, executeAssetWrite } from '../src/processor/assets.js';
 
 // --- AGENTS API ---
 
@@ -79,7 +80,7 @@ app.get('/api/agents/:id', async (req, res) => {
 // PUT Update Agent Settings (including handover)
 app.put('/api/agents/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, system_prompt, history_limit, trigger_mode, output_mode, handover_to_agent_id, handover_mode } = req.body;
+    const { name, system_prompt, history_limit, trigger_mode, output_mode, handover_to_agent_id, handover_mode, pre_process_asset_actions_json, post_process_asset_actions_json, asset_prompt_context_enabled, asset_prompt_context_header } = req.body;
     try {
         const pool = await getPool();
         let query = 'UPDATE Agents SET ';
@@ -116,6 +117,20 @@ app.put('/api/agents/:id', async (req, res) => {
             pool.request().input('handover_mode', sql.VarChar(50), handover_mode);
         }
 
+
+        if (pre_process_asset_actions_json !== undefined) {
+            updates.push('pre_process_asset_actions_json = @pre_process_asset_actions_json');
+        }
+        if (post_process_asset_actions_json !== undefined) {
+            updates.push('post_process_asset_actions_json = @post_process_asset_actions_json');
+        }
+        if (asset_prompt_context_enabled !== undefined) {
+            updates.push('asset_prompt_context_enabled = @asset_prompt_context_enabled');
+        }
+        if (asset_prompt_context_header !== undefined) {
+            updates.push('asset_prompt_context_header = @asset_prompt_context_header');
+        }
+
         if (updates.length > 0) {
             query += updates.join(', ');
             query += ' WHERE id = @id';
@@ -130,6 +145,10 @@ app.put('/api/agents/:id', async (req, res) => {
             if (output_mode !== undefined) request.input('output_mode', sql.VarChar(50), output_mode);
             if (handover_to_agent_id !== undefined) request.input('handover_to_agent_id', sql.Int, handover_to_agent_id);
             if (handover_mode !== undefined) request.input('handover_mode', sql.VarChar(50), handover_mode);
+            if (pre_process_asset_actions_json !== undefined) request.input('pre_process_asset_actions_json', sql.NVarChar(sql.MAX), pre_process_asset_actions_json);
+            if (post_process_asset_actions_json !== undefined) request.input('post_process_asset_actions_json', sql.NVarChar(sql.MAX), post_process_asset_actions_json);
+            if (asset_prompt_context_enabled !== undefined) request.input('asset_prompt_context_enabled', sql.Bit, asset_prompt_context_enabled ? 1 : 0);
+            if (asset_prompt_context_header !== undefined) request.input('asset_prompt_context_header', sql.NVarChar(sql.MAX), asset_prompt_context_header);
 
             await request.query(query);
             res.json({ success: true });
@@ -486,6 +505,190 @@ app.put('/api/rules/:id', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to update rule' });
+    }
+});
+
+
+
+// --- ASSETS API ---
+app.get('/api/assets/tables', async (_req, res) => {
+    try {
+        const pool = await getPool();
+        const result = await pool.request().query('SELECT * FROM AssetTables ORDER BY display_name ASC, id ASC');
+        res.json(result.recordset);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch asset tables' });
+    }
+});
+
+app.post('/api/assets/tables', async (req, res) => {
+    const { logical_name, display_name, description } = req.body;
+    if (!logical_name || !display_name) return res.status(400).json({ error: 'logical_name and display_name are required' });
+
+    const physicalTableName = `asset_${logical_name}`;
+
+    try {
+        const pool = await getPool();
+        await ensureAssetStorageTable(pool, physicalTableName);
+
+        const result = await pool.request()
+            .input('logical_name', sql.NVarChar(128), logical_name)
+            .input('display_name', sql.NVarChar(255), display_name)
+            .input('description', sql.NVarChar(sql.MAX), description || null)
+            .input('physical_table_name', sql.NVarChar(128), physicalTableName)
+            .query(`
+                INSERT INTO AssetTables (logical_name, display_name, description, physical_table_name)
+                OUTPUT INSERTED.*
+                VALUES (@logical_name, @display_name, @description, @physical_table_name)
+            `);
+        res.json(result.recordset[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create asset table' });
+    }
+});
+
+app.put('/api/assets/tables/:id', async (req, res) => {
+    const { id } = req.params;
+    const { display_name, description } = req.body;
+
+    try {
+        const pool = await getPool();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('display_name', sql.NVarChar(255), display_name)
+            .input('description', sql.NVarChar(sql.MAX), description || null)
+            .query('UPDATE AssetTables SET display_name = @display_name, description = @description WHERE id = @id');
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update asset table' });
+    }
+});
+
+app.delete('/api/assets/tables/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const pool = await getPool();
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        try {
+            await tx.request().input('asset_table_id', sql.Int, id).query('DELETE FROM AgentAssetBindings WHERE asset_table_id = @asset_table_id');
+            await tx.request().input('id', sql.Int, id).query('DELETE FROM AssetTables WHERE id = @id');
+            await tx.commit();
+            res.json({ success: true });
+        } catch (e) {
+            await tx.rollback();
+            throw e;
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to delete asset table' });
+    }
+});
+
+app.get('/api/agents/:id/assets-bindings', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('agent_id', sql.Int, id)
+            .query(`
+              SELECT b.*, a.logical_name, a.display_name, a.description
+              FROM AgentAssetBindings b
+              INNER JOIN AssetTables a ON a.id = b.asset_table_id
+              WHERE b.agent_id = @agent_id
+              ORDER BY a.display_name ASC
+            `);
+        res.json(result.recordset);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch bindings' });
+    }
+});
+
+app.put('/api/agents/:id/assets-bindings', async (req, res) => {
+    const { id } = req.params;
+    const { bindings } = req.body;
+    if (!Array.isArray(bindings)) return res.status(400).json({ error: 'bindings array is required' });
+
+    try {
+        const pool = await getPool();
+        for (const binding of bindings) {
+            await pool.request()
+                .input('agent_id', sql.Int, id)
+                .input('asset_table_id', sql.Int, binding.asset_table_id)
+                .input('can_read', sql.Bit, binding.can_read ? 1 : 0)
+                .input('can_write', sql.Bit, binding.can_write ? 1 : 0)
+                .input('can_search', sql.Bit, binding.can_search ? 1 : 0)
+                .input('include_in_prompt', sql.Bit, binding.include_in_prompt ? 1 : 0)
+                .input('prompt_row_limit', sql.Int, binding.prompt_row_limit || 5)
+                .query(`
+                    MERGE AgentAssetBindings AS target
+                    USING (SELECT @agent_id AS agent_id, @asset_table_id AS asset_table_id) AS source
+                    ON target.agent_id = source.agent_id AND target.asset_table_id = source.asset_table_id
+                    WHEN MATCHED THEN UPDATE SET
+                        can_read = @can_read,
+                        can_write = @can_write,
+                        can_search = @can_search,
+                        include_in_prompt = @include_in_prompt,
+                        prompt_row_limit = @prompt_row_limit
+                    WHEN NOT MATCHED THEN
+                        INSERT (agent_id, asset_table_id, can_read, can_write, can_search, include_in_prompt, prompt_row_limit)
+                        VALUES (@agent_id, @asset_table_id, @can_read, @can_write, @can_search, @include_in_prompt, @prompt_row_limit);
+                `);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to upsert bindings' });
+    }
+});
+
+app.post('/api/assets/:logicalName/read', async (req, res) => {
+    const { logicalName } = req.params;
+    const { limit } = req.body;
+    try {
+        const pool = await getPool();
+        const asset = await getAssetByLogicalName(pool, logicalName);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        const rows = await executeAssetRead(pool, asset.physical_table_name, limit || 10);
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to read asset rows' });
+    }
+});
+
+app.post('/api/assets/:logicalName/search', async (req, res) => {
+    const { logicalName } = req.params;
+    const { query, limit } = req.body;
+    try {
+        const pool = await getPool();
+        const asset = await getAssetByLogicalName(pool, logicalName);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        const rows = await executeAssetSearch(pool, asset.physical_table_name, query || '', limit || 10);
+        res.json(rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to search asset rows' });
+    }
+});
+
+app.post('/api/assets/:logicalName/write', async (req, res) => {
+    const { logicalName } = req.params;
+    const { content, metadata } = req.body;
+    if (!content) return res.status(400).json({ error: 'content is required' });
+    try {
+        const pool = await getPool();
+        const asset = await getAssetByLogicalName(pool, logicalName);
+        if (!asset) return res.status(404).json({ error: 'Asset not found' });
+        await executeAssetWrite(pool, asset.physical_table_name, content, metadata);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to write asset row' });
     }
 });
 
