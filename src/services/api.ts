@@ -1,96 +1,167 @@
+const API_URL = '/api';
 
 export const api = {
-    async getNotes() {
-        const res = await fetch('/api/notes');
-        return res.json();
+    // Agents
+    getAgents: async () => {
+        const response = await fetch(`${API_URL}/agents`);
+        return response.json();
     },
-    async getChunks() {
-        const res = await fetch('/api/chunks');
-        return res.json();
-    },
-    async getRules() {
-        const res = await fetch('/api/rules');
-        return res.json();
-    },
-    async addChunk(content: string) {
-        const res = await fetch('/api/chunks', {
+
+    createAgent: async (name: string) => {
+        const response = await fetch(`${API_URL}/agents`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content }),
+            body: JSON.stringify({ name }),
         });
-        return res.json();
+        return response.json();
     },
-    async addRule(instruction: string) {
-        const res = await fetch('/api/rules', {
+
+    getAgent: async (id: number) => {
+        const response = await fetch(`${API_URL}/agents/${id}`);
+        return response.json();
+    },
+
+    updateAgent: async (id: number, settings: any) => {
+        const response = await fetch(`${API_URL}/agents/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings),
+        });
+        return response.json();
+    },
+
+    deleteAgent: async (id: number) => {
+        const response = await fetch(`${API_URL}/agents/${id}`, {
+            method: 'DELETE',
+        });
+        return response.json();
+    },
+
+    triggerHandover: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/agents/${agentId}/handover`, {
+            method: 'POST',
+        });
+        return response.json();
+    },
+
+    // Resources (scoped by agentId)
+    getChunks: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/chunks?agentId=${agentId}`);
+        return response.json();
+    },
+
+    getRules: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/rules?agentId=${agentId}`);
+        return response.json();
+    },
+
+    getNotes: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/notes?agentId=${agentId}`);
+        return response.json();
+    },
+
+    addChunk: async (content: string, agentId: number) => {
+        const response = await fetch(`${API_URL}/chunks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instruction }),
+            body: JSON.stringify({ content, agentId }),
         });
-        return res.json();
+        return response.json();
     },
-    async runProcessing() {
-        const res = await fetch('/api/process', {
+
+    addRule: async (instruction: string, agentId: number) => {
+        const response = await fetch(`${API_URL}/rules`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instruction, agentId }),
         });
-        return res.json();
+        return response.json();
     },
-    async deleteChunk(id: number) {
-        const res = await fetch(`/api/chunks/${id}`, {
+
+    deleteChunk: async (id: number) => {
+        const response = await fetch(`${API_URL}/chunks/${id}`, {
             method: 'DELETE',
         });
-        return res.json();
+        return response.json();
     },
-    async deleteRule(id: number) {
-        const res = await fetch(`/api/rules/${id}`, {
+
+    deleteRule: async (id: number) => {
+        const response = await fetch(`${API_URL}/rules/${id}`, {
             method: 'DELETE',
         });
-        return res.json();
+        return response.json();
     },
-    async deleteNote(id: number) {
-        const res = await fetch(`/api/notes/${id}`, {
+
+    deleteNote: async (id: number) => {
+        const response = await fetch(`${API_URL}/notes/${id}`, {
             method: 'DELETE',
         });
-        return res.json();
+        return response.json();
     },
-    async updateChunk(id: number, content: string) {
-        const res = await fetch(`/api/chunks/${id}`, {
+
+    updateChunk: async (id: number, content: string) => {
+        const response = await fetch(`${API_URL}/chunks/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content }),
         });
-        return res.json();
+        return response.json();
     },
-    async updateRule(id: number, instruction: string) {
-        const res = await fetch(`/api/rules/${id}`, {
+
+    updateRule: async (id: number, instruction: string) => {
+        const response = await fetch(`${API_URL}/rules/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ instruction }),
         });
-        return res.json();
+        return response.json();
     },
-    async reorderChunks(orderedIds: number[]) {
-        const res = await fetch('/api/chunks/reorder', {
+
+    // Processing
+    processChunks: async (agentId: number) => {
+        const response = await fetch(`${API_URL}/process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agentId }),
+        });
+        return response.json(); // { success: true, processedCount: number }
+    },
+
+    processChunk: async (chunkId: number, agentId: number) => {
+        const response = await fetch(`${API_URL}/process-chunk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chunkId, agentId }),
+        });
+        return response.json(); // { success: true, note: Note }
+    },
+
+    reorderChunks: async (orderedIds: number[]) => {
+        const response = await fetch(`${API_URL}/chunks/reorder`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ orderedIds }),
         });
-        return res.json();
+        return response.json();
     },
-    async reorderRules(orderedIds: number[]) {
-        const res = await fetch('/api/rules/reorder', {
+
+    reorderRules: async (orderedIds: number[]) => {
+        const response = await fetch(`${API_URL}/rules/reorder`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ orderedIds }),
         });
-        return res.json();
+        return response.json();
     },
-    async processChunk(chunkId: number) {
-        const res = await fetch('/api/process-chunk', {
+
+    // Utilities
+    optimizePrompt: async (prompt: string) => {
+        const response = await fetch(`${API_URL}/optimize-prompt`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chunkId }),
+            body: JSON.stringify({ prompt }),
         });
-        return res.json();
+        return response.json();
     },
     async getSystemPrompt() {
         const res = await fetch('/api/settings/system_prompt');
@@ -101,14 +172,6 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key: 'system_prompt', value }),
-        });
-        return res.json();
-    },
-    async optimizePrompt(prompt: string) {
-        const res = await fetch('/api/optimize-prompt', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
         });
         return res.json();
     },
