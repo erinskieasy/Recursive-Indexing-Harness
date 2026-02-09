@@ -14,6 +14,10 @@ interface AssetTable {
     description?: string;
 }
 
+function coerceArray<T>(value: unknown): T[] {
+    return Array.isArray(value) ? value : [];
+}
+
 interface AgentPanelProps {
     onAgentSelect: (agentId: number) => void;
     selectedAgentId: number | null;
@@ -31,6 +35,7 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
 
     const [assets, setAssets] = useState<AssetTable[]>([]);
     const [bindings, setBindings] = useState<Record<number, any>>({});
+    const [assetsError, setAssetsError] = useState<string | null>(null);
     const [assetLogicalName, setAssetLogicalName] = useState('');
     const [assetDisplayName, setAssetDisplayName] = useState('');
     const [assetDescription, setAssetDescription] = useState('');
@@ -63,16 +68,20 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
     const fetchAssets = async () => {
         try {
             const data = await api.getAssetTables();
-            setAssets(data);
+            const safeAssets = coerceArray<AssetTable>(data);
+            setAssets(safeAssets);
+            setAssetsError(Array.isArray(data) ? null : 'Failed to load assets (unexpected API response).');
         } catch (err) {
             console.error('Failed to fetch assets', err);
+            setAssets([]);
+            setAssetsError('Failed to fetch assets.');
         }
     };
 
     const fetchBindings = async (agentId: number) => {
         try {
             const data = await api.getAgentAssetBindings(agentId);
-            const mapped = data.reduce((acc: Record<number, any>, item: any) => {
+            const mapped = coerceArray<any>(data).reduce((acc: Record<number, any>, item: any) => {
                 acc[item.asset_table_id] = item;
                 return acc;
             }, {});
@@ -337,6 +346,9 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
 
                     {activeTab === 'assets' && (
                         <div className="space-y-4 border border-gray-200 rounded-lg p-4">
+                            {assetsError && (
+                                <p className="text-sm text-red-600">{assetsError}</p>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                                 <input value={assetLogicalName} onChange={e => setAssetLogicalName(e.target.value)} placeholder="logical_name" className="rounded border p-2 text-sm" />
                                 <input value={assetDisplayName} onChange={e => setAssetDisplayName(e.target.value)} placeholder="Display Name" className="rounded border p-2 text-sm" />
