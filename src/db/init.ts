@@ -33,8 +33,59 @@ async function initDB() {
       BEGIN
         ALTER TABLE Agents ADD handover_mode VARCHAR(50) DEFAULT 'aggregate';
       END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Agents' AND COLUMN_NAME = 'pre_process_asset_actions_json')
+      BEGIN
+        ALTER TABLE Agents ADD pre_process_asset_actions_json NVARCHAR(MAX) NULL;
+      END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Agents' AND COLUMN_NAME = 'post_process_asset_actions_json')
+      BEGIN
+        ALTER TABLE Agents ADD post_process_asset_actions_json NVARCHAR(MAX) NULL;
+      END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Agents' AND COLUMN_NAME = 'asset_prompt_context_enabled')
+      BEGIN
+        ALTER TABLE Agents ADD asset_prompt_context_enabled BIT DEFAULT 0;
+      END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Agents' AND COLUMN_NAME = 'asset_prompt_context_header')
+      BEGIN
+        ALTER TABLE Agents ADD asset_prompt_context_header NVARCHAR(MAX) NULL;
+      END
     `);
     console.log('Ensured Agents table exists and has all columns.');
+
+    // 1b. Create Asset metadata tables
+    await pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AssetTables' AND xtype='U')
+      CREATE TABLE AssetTables (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        logical_name NVARCHAR(128) NOT NULL UNIQUE,
+        display_name NVARCHAR(255) NOT NULL,
+        description NVARCHAR(MAX) NULL,
+        physical_table_name NVARCHAR(128) NOT NULL UNIQUE,
+        created_at DATETIME2 DEFAULT GETDATE()
+      )
+    `);
+
+    await pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='AgentAssetBindings' AND xtype='U')
+      CREATE TABLE AgentAssetBindings (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        agent_id INT NOT NULL,
+        asset_table_id INT NOT NULL,
+        can_read BIT DEFAULT 1,
+        can_write BIT DEFAULT 0,
+        can_search BIT DEFAULT 1,
+        include_in_prompt BIT DEFAULT 0,
+        prompt_row_limit INT DEFAULT 5,
+        created_at DATETIME2 DEFAULT GETDATE(),
+        CONSTRAINT FK_AgentAssetBindings_Agent FOREIGN KEY (agent_id) REFERENCES Agents(id),
+        CONSTRAINT FK_AgentAssetBindings_Asset FOREIGN KEY (asset_table_id) REFERENCES AssetTables(id),
+        CONSTRAINT UQ_AgentAssetBinding UNIQUE(agent_id, asset_table_id)
+      )
+    `);
 
     // 2. Ensure Default Agent Exists
     const defaultAgent = await pool.request().query("SELECT TOP 1 id FROM Agents");

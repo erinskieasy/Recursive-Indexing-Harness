@@ -1,9 +1,21 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import toast from 'react-hot-toast';
 
 interface Agent {
     id: number;
     name: string;
+}
+
+interface AssetTable {
+    id: number;
+    logical_name: string;
+    display_name: string;
+    description?: string;
+}
+
+function coerceArray<T>(value: unknown): T[] {
+    return Array.isArray(value) ? value : [];
 }
 
 interface AgentPanelProps {
@@ -17,28 +29,65 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
     const [isExpanded, setIsExpanded] = useState(true);
     const [newAgentName, setNewAgentName] = useState('');
     const [isAdding, setIsAdding] = useState(false);
-
-    // Renaming state
     const [editingAgentId, setEditingAgentId] = useState<number | null>(null);
     const [editingName, setEditingName] = useState('');
-
-    // Tab state
     const [activeTab, setActiveTab] = useState<'agents' | 'tools' | 'assets'>('agents');
+
+    const [assets, setAssets] = useState<AssetTable[]>([]);
+    const [bindings, setBindings] = useState<Record<number, any>>({});
+    const [assetsError, setAssetsError] = useState<string | null>(null);
+    const [assetLogicalName, setAssetLogicalName] = useState('');
+    const [assetDisplayName, setAssetDisplayName] = useState('');
+    const [assetDescription, setAssetDescription] = useState('');
 
     useEffect(() => {
         fetchAgents();
+        fetchAssets();
     }, []);
+
+    useEffect(() => {
+        if (selectedAgentId) {
+            fetchBindings(selectedAgentId);
+        } else {
+            setBindings({});
+        }
+    }, [selectedAgentId]);
 
     const fetchAgents = async () => {
         try {
             const data = await api.getAgents();
             setAgents(data);
-            // Auto-select first agent if none selected and agents exist
             if (data.length > 0 && !selectedAgentId) {
                 onAgentSelect(data[0].id);
             }
         } catch (err) {
             console.error('Failed to fetch agents', err);
+        }
+    };
+
+    const fetchAssets = async () => {
+        try {
+            const data = await api.getAssetTables();
+            const safeAssets = coerceArray<AssetTable>(data);
+            setAssets(safeAssets);
+            setAssetsError(Array.isArray(data) ? null : 'Failed to load assets (unexpected API response).');
+        } catch (err) {
+            console.error('Failed to fetch assets', err);
+            setAssets([]);
+            setAssetsError('Failed to fetch assets.');
+        }
+    };
+
+    const fetchBindings = async (agentId: number) => {
+        try {
+            const data = await api.getAgentAssetBindings(agentId);
+            const mapped = coerceArray<any>(data).reduce((acc: Record<number, any>, item: any) => {
+                acc[item.asset_table_id] = item;
+                return acc;
+            }, {});
+            setBindings(mapped);
+        } catch (err) {
+            console.error('Failed to fetch bindings', err);
         }
     };
 
@@ -56,7 +105,7 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
     };
 
     const handleDeleteAgent = async (e: React.MouseEvent, agentId: number, agentName: string) => {
-        e.stopPropagation(); // Prevent selection
+        e.stopPropagation();
         if (!confirm(`Are you sure you want to delete agent "${agentName}"? This will delete ALL associated chunks, rules, and notes.`)) {
             return;
         }
@@ -67,11 +116,10 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
             setAgents(updatedAgents);
 
             if (selectedAgentId === agentId) {
-                // If we deleted the active agent, switch to first available or none
                 if (updatedAgents.length > 0) {
                     onAgentSelect(updatedAgents[0].id);
                 } else {
-                    onAgentSelect(0); // or null/handle empty state
+                    onAgentSelect(0);
                 }
             }
         } catch (err) {
@@ -93,14 +141,11 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
         }
 
         try {
-            // Optimistic update
             setAgents(agents.map(a => a.id === agentId ? { ...a, name: editingName } : a));
             setEditingAgentId(null);
-
             await api.updateAgent(agentId, { name: editingName });
         } catch (err) {
             console.error('Failed to rename agent', err);
-            // Revert on failure? For now just log
         }
     };
 
@@ -112,9 +157,66 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
         }
     };
 
+    const handleCreateAsset = async () => {
+        if (!assetLogicalName.trim() || !assetDisplayName.trim()) {
+            toast.error('Logical name and display name are required');
+            return;
+        }
+
+        try {
+            await api.createAssetTable({
+                logical_name: assetLogicalName.trim(),
+                display_name: assetDisplayName.trim(),
+                description: assetDescription.trim() || undefined,
+            });
+            setAssetLogicalName('');
+            setAssetDisplayName('');
+            setAssetDescription('');
+            await fetchAssets();
+            toast.success('Asset table created');
+        } catch (err) {
+            console.error('Failed to create asset table', err);
+            toast.error('Failed to create asset table');
+        }
+    };
+
+    const updateBinding = (assetTableId: number, key: string, value: any) => {
+        const existing = bindings[assetTableId] || {
+            asset_table_id: assetTableId,
+            can_read: true,
+            can_write: false,
+            can_search: true,
+            include_in_prompt: false,
+            prompt_row_limit: 5,
+        };
+
+        setBindings(prev => ({
+            ...prev,
+            [assetTableId]: {
+                ...existing,
+                [key]: value,
+            },
+        }));
+    };
+
+    const handleSaveBindings = async () => {
+        if (!selectedAgentId) {
+            toast.error('Select an agent first');
+            return;
+        }
+
+        try {
+            await api.saveAgentAssetBindings(selectedAgentId, Object.values(bindings));
+            toast.success('Asset bindings saved');
+            await fetchBindings(selectedAgentId);
+        } catch (err) {
+            console.error('Failed to save bindings', err);
+            toast.error('Failed to save asset bindings');
+        }
+    };
+
     return (
         <div className="bg-white border-b border-gray-200 transition-all duration-300">
-            {/* Header / Toggle Bar */}
             <div
                 className="flex items-center justify-between px-6 py-3 bg-gray-50 border-b border-gray-100 cursor-pointer hover:bg-gray-100 transition"
                 onClick={() => setIsExpanded(!isExpanded)}
@@ -123,19 +225,12 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                     <h2 className="font-scemibold text-gray-700">Recursive Auto-Agents</h2>
                 </div>
                 <button className="text-gray-400 hover:text-gray-600">
-                    {isExpanded ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-                    ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                    )}
+                    {isExpanded ? '▴' : '▾'}
                 </button>
             </div>
 
-            {/* Content */}
             {isExpanded && (
                 <div className="p-4 px-6 overflow-x-auto">
-
-                    {/* Tabs */}
                     <div className="flex space-x-4 border-b border-gray-200 mb-4 pb-2">
                         <button
                             className={`pb-1 px-1 font-medium text-sm transition-colors ${activeTab === 'agents' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
@@ -157,7 +252,6 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                         </button>
                     </div>
 
-                    {/* Tab Content */}
                     {activeTab === 'agents' && (
                         <div className="flex items-center gap-4">
                             {agents.map(agent => (
@@ -195,7 +289,7 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                                                 className="text-gray-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition p-1"
                                                 title="Rename Agent"
                                             >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                                ✎
                                             </button>
                                         )}
                                         <button
@@ -203,7 +297,7 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                                             className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1"
                                             title="Delete Agent"
                                         >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                            ✕
                                         </button>
                                         {selectedAgentId === agent.id && (
                                             <span className="w-2 h-2 rounded-full bg-blue-500"></span>
@@ -215,7 +309,6 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                                 </div>
                             ))}
 
-                            {/* Add New Agent Button */}
                             {isAdding ? (
                                 <div className="flex items-center gap-2 min-w-[200px] bg-gray-50 p-2 rounded-lg border border-gray-200">
                                     <input
@@ -239,29 +332,66 @@ export default function AgentPanel({ onAgentSelect, selectedAgentId, agentStates
                                     className="flex items-center justify-center p-3 rounded-lg border border-dashed border-gray-300 text-gray-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 transition min-w-[40px] h-[50px] w-[50px]"
                                     title="Add New Agent"
                                 >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                                    </svg>
+                                    +
                                 </button>
                             )}
-
-                            {/* Flow Arrow (Visual Candy) */}
-                            <div className="text-gray-300">
-                                <span className="text-xs italic">→ next</span>
-                            </div>
                         </div>
                     )}
 
                     {activeTab === 'tools' && (
                         <div className="p-4 text-center text-gray-500 italic border border-dashed border-gray-200 rounded-lg min-h-[100px] flex items-center justify-center">
-                            Tools Registry Coming Soon...
+                            Tool calling setup intentionally deferred for this branch.
                         </div>
                     )}
 
                     {activeTab === 'assets' && (
-                        <div className="p-4 text-center text-gray-500 italic border border-dashed border-gray-200 rounded-lg min-h-[100px] flex items-center justify-center">
-                            Assets Library Coming Soon...
+                        <div className="space-y-4 border border-gray-200 rounded-lg p-4">
+                            {assetsError && (
+                                <p className="text-sm text-red-600">{assetsError}</p>
+                            )}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <input value={assetLogicalName} onChange={e => setAssetLogicalName(e.target.value)} placeholder="logical_name" className="rounded border p-2 text-sm" />
+                                <input value={assetDisplayName} onChange={e => setAssetDisplayName(e.target.value)} placeholder="Display Name" className="rounded border p-2 text-sm" />
+                                <input value={assetDescription} onChange={e => setAssetDescription(e.target.value)} placeholder="Description" className="rounded border p-2 text-sm" />
+                            </div>
+                            <button onClick={handleCreateAsset} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Add Asset Table</button>
+
+                            {!selectedAgentId && (
+                                <p className="text-sm text-gray-500">Select an agent to configure read/write/search/prompt permissions.</p>
+                            )}
+
+                            <div className="space-y-3">
+                                {assets.map(asset => {
+                                    const binding = bindings[asset.id] || {
+                                        can_read: true,
+                                        can_write: false,
+                                        can_search: true,
+                                        include_in_prompt: false,
+                                        prompt_row_limit: 5,
+                                    };
+                                    return (
+                                        <div key={asset.id} className="border rounded p-3 bg-gray-50">
+                                            <div className="font-medium text-sm">{asset.display_name} <span className="text-gray-400">({asset.logical_name})</span></div>
+                                            {asset.description && <div className="text-xs text-gray-500 mt-1">{asset.description}</div>}
+                                            {selectedAgentId && (
+                                                <div className="mt-2 flex flex-wrap gap-4 text-xs">
+                                                    <label><input type="checkbox" checked={!!binding.can_read} onChange={e => updateBinding(asset.id, 'can_read', e.target.checked)} /> Read</label>
+                                                    <label><input type="checkbox" checked={!!binding.can_write} onChange={e => updateBinding(asset.id, 'can_write', e.target.checked)} /> Write</label>
+                                                    <label><input type="checkbox" checked={!!binding.can_search} onChange={e => updateBinding(asset.id, 'can_search', e.target.checked)} /> Search</label>
+                                                    <label><input type="checkbox" checked={!!binding.include_in_prompt} onChange={e => updateBinding(asset.id, 'include_in_prompt', e.target.checked)} /> Include in prompt</label>
+                                                    <label className="flex items-center gap-1">Prompt rows
+                                                        <input type="number" min={1} max={25} value={binding.prompt_row_limit || 5} onChange={e => updateBinding(asset.id, 'prompt_row_limit', parseInt(e.target.value || '5'))} className="w-16 rounded border p-1" />
+                                                    </label>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {selectedAgentId && (
+                                <button onClick={handleSaveBindings} className="px-3 py-1.5 bg-emerald-600 text-white rounded text-sm">Save Agent Asset Permissions</button>
+                            )}
                         </div>
                     )}
                 </div>
